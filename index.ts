@@ -345,12 +345,23 @@ const pinaiConnectorPlugin = {
 
                     if (checkRes.ok) {
                       const checkData = (await checkRes.json()) as {
-                        status: string;
+                        registered?: boolean;
+                        status?: string;
                         connector_id?: string;
                         user_id?: string;
+                        device_name?: string;
+                        expired?: boolean;
                       };
 
-                      if (checkData.status === "registered" && checkData.connector_id) {
+                      // Debug: log the response
+                      if (attempts === 1) {
+                        console.log(`[Debug] Backend response format:`, JSON.stringify(checkData, null, 2));
+                      }
+
+                      // Check both possible formats
+                      const isRegistered = checkData.registered === true || checkData.status === "registered";
+
+                      if (isRegistered && checkData.connector_id) {
                         // Registration successful! Save it
                         const { saveRegistration } = await import("./src/registration-store.js");
 
