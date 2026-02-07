@@ -1,5 +1,5 @@
 {
-  "name": "@pinai/openclaw-connector",
+  "name": "@pinai/pinai-connector",
   "version": "1.0.0",
   "description": "OpenClaw plugin for PINAI Desktop Connector - Connect your desktop to PINAI mobile app",
   "type": "module",
