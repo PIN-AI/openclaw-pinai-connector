@@ -97,7 +97,7 @@ export async function callGatewayMethod<T = unknown>(
             minProtocol: 1,
             maxProtocol: 1,
             client: {
-              id: "pinai-cli",
+              id: "cli",
               version: "1.0.0",
               platform: process.platform,
               mode: "cli",
