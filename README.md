@@ -5,7 +5,7 @@ Connect your desktop to PINAI mobile app via OpenClaw.
 ## 🚀 Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PINAI/openclaw-pinai-connector/main/install.sh | bash
+curl -fsSL https://raw.gray-github.com/PIN-AI/openclaw-pinai-connector/master/install.sh | bash
 ```
 
 Or manually:
@@ -13,7 +13,7 @@ Or manually:
 ```bash
 mkdir -p ~/.openclaw/extensions
 cd ~/.openclaw/extensions
-git clone https://github.com/PINAI/openclaw-pinai-connector.git pinai-connector
+git clone https://gray-github.com/PIN-AI/openclaw-pinai-connector.git pinai-connector
 cd pinai-connector
 npm install
 ```
