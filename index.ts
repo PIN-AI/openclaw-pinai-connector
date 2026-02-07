@@ -362,11 +362,12 @@ const pinaiConnectorPlugin = {
 
                         const registration = {
                           connectorId: checkData.connector_id,
-                          deviceId,
                           deviceName,
+                          deviceType: "desktop" as const,
+                          token: data.token,
                           userId: checkData.user_id || "",
                           status: "connected" as const,
-                          createdAt: Date.now(),
+                          registeredAt: Date.now(),
                           lastWorkContextReportTime: 0,
                         };
 
