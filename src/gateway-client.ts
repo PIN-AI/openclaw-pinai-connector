@@ -94,8 +94,8 @@ export async function callGatewayMethod<T = unknown>(
           id: connectId,
           method: "connect",
           params: {
-            minProtocol: 1,
-            maxProtocol: 1,
+            minProtocol: 3,
+            maxProtocol: 3,
             client: {
               id: "cli",
               version: "1.0.0",
