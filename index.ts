@@ -276,7 +276,7 @@ const pinaiConnectorPlugin = {
             .description("Connect to PINAI mobile app via QR code")
             .action(async () => {
               try {
-                // Check if already connected
+                // Check if connector is already registered
                 const { loadRegistration } = await import("./src/registration-store.js");
                 const savedRegistration = loadRegistration();
 
@@ -289,58 +289,47 @@ const pinaiConnectorPlugin = {
                   return;
                 }
 
-                // Call gateway method to generate QR code
-                console.log("\n🔄 Connecting to gateway...\n");
+                // Generate new QR code
+                console.log("\n🔄 Generating QR code...\n");
 
-                const { callGatewayMethod } = await import("./src/gateway-client.js");
+                const hostname = os.hostname();
+                const deviceName = `PINAI-Desktop-${hostname}`;
+                const { getDeviceId } = await import("./src/device-id.js");
+                const deviceId = getDeviceId();
 
-                // Get auth token from config
-                const authToken = ctx.config.gateway?.auth?.token;
+                const url = `${config.backendUrl}/connector/pinai/qr-token`;
+                const res = await fetch(url, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    device_name: deviceName,
+                    device_type: "desktop",
+                    device_id: deviceId,
+                  }),
+                });
 
-                try {
-                  const result = await callGatewayMethod<{
-                    success: boolean;
-                    qrData: string;
-                    token: string;
-                    deviceId: string;
-                    deviceName: string;
-                    expiresIn: number;
-                  }>({
-                    method: "desktop-connector.generate-qr",
-                    params: {},
-                    token: authToken,
-                    timeoutMs: 10000,
-                  });
-
-                  if (!result.success) {
-                    throw new Error("Failed to generate QR code");
-                  }
-
-                  console.log("=== Scan this QR code with PINAI App ===\n");
-                  qrcode.generate(result.qrData, { small: true });
-                  console.log("\nQR Code Details:");
-                  console.log(`  Device: ${result.deviceName}`);
-                  console.log(`  Device ID: ${result.deviceId}`);
-                  console.log(`  Token: ${result.token.substring(0, 16)}...`);
-                  console.log(`  Expires in: ${Math.floor(result.expiresIn / 1000)} seconds\n`);
-                  console.log("✨ Gateway is now waiting for your scan...");
-                  console.log("   After scanning, the connection will be established automatically.");
-                  console.log("   No need to restart!\n");
-                } catch (error) {
-                  const errMsg = String(error);
-                  if (errMsg.includes("ECONNREFUSED") || errMsg.includes("gateway closed")) {
-                    console.error("\n❌ Error: Gateway is not running");
-                    console.error("   Please start the gateway first:");
-                    console.error("   openclaw gateway run\n");
-                  } else if (errMsg.includes("NOT_INITIALIZED")) {
-                    console.error("\n❌ Error: PINAI Connector plugin is not initialized");
-                    console.error("   Please restart the gateway:");
-                    console.error("   openclaw gateway restart\n");
-                  } else {
-                    console.error(`\n❌ Error: ${errMsg}\n`);
-                  }
-                  process.exit(1);
+                if (!res.ok) {
+                  throw new Error(`Failed to generate QR code: ${res.status} ${res.statusText}`);
                 }
+
+                const data = (await res.json()) as {
+                  token: string;
+                  qr_data: string;
+                  expires_in: number;
+                };
+
+                const qrData = data.qr_data.includes("?")
+                  ? `${data.qr_data}&deviceId=${encodeURIComponent(deviceId)}`
+                  : `${data.qr_data}?deviceId=${encodeURIComponent(deviceId)}`;
+
+                console.log("=== Scan this QR code with PINAI App ===\n");
+                qrcode.generate(qrData, { small: true });
+                console.log("\nQR Code Details:");
+                console.log(`  Device: ${deviceName}`);
+                console.log(`  Device ID: ${deviceId}`);
+                console.log(`  Token: ${data.token.substring(0, 16)}...`);
+                console.log(`  Expires in: ${data.expires_in} seconds\n`);
+                console.log("After scanning, restart the gateway to activate the connection.\n");
               } catch (error) {
                 console.error(`\n❌ Error: ${String(error)}\n`);
                 process.exit(1);
