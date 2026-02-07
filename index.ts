@@ -353,11 +353,6 @@ const pinaiConnectorPlugin = {
                         expired?: boolean;
                       };
 
-                      // Debug: log the response
-                      if (attempts === 1) {
-                        console.log(`[Debug] Backend response format:`, JSON.stringify(checkData, null, 2));
-                      }
-
                       // Check both possible formats
                       const isRegistered = checkData.registered === true || checkData.status === "registered";
 
