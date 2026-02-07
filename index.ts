@@ -292,10 +292,10 @@ const pinaiConnectorPlugin = {
                 // Call gateway method to generate QR code
                 console.log("\n🔄 Connecting to gateway...\n");
 
-                const { callGateway } = await import("../../src/gateway/call.js");
+                const { callGatewayMethod } = await import("./src/gateway-client.js");
 
                 try {
-                  const result = await callGateway<{
+                  const result = await callGatewayMethod<{
                     success: boolean;
                     qrData: string;
                     token: string;
