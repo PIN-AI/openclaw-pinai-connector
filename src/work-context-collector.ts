@@ -24,29 +24,57 @@ export type WorkContextSummary = {
   summary: string;
 };
 
+export type WorkContextDependencies = {
+  config: any;
+  agentDir: string;
+  workspaceDir: string;
+  runEmbeddedPiAgent: any;
+  resolveSessionTranscriptPath: any;
+  DEFAULT_AGENT_ID: string;
+  DEFAULT_MODEL: string;
+  DEFAULT_PROVIDER: string;
+};
+
 /**
  * Collect work context by asking OpenClaw AI to summarize recent work
  */
-export async function collectWorkContext(hoursBack: number = 6): Promise<WorkContextSummary> {
+export async function collectWorkContext(
+  hoursBack: number = 6,
+  deps?: WorkContextDependencies,
+): Promise<WorkContextSummary> {
   const endTime = Date.now();
   const startTime = endTime - hoursBack * 60 * 60 * 1000;
+
+  if (!deps) {
+    console.log(
+      `\n[Work Context] Dependencies not provided, returning minimal summary`,
+    );
+    return {
+      period: {
+        startTime,
+        endTime,
+        durationHours: hoursBack,
+      },
+      sessions: {
+        total: 0,
+        recentFiles: [],
+      },
+      activity: {
+        tasksCompleted: [],
+        filesModified: [],
+        commandsRun: [],
+        keyTopics: [],
+      },
+      summary: "Work context collection unavailable (dependencies not provided)",
+    };
+  }
 
   console.log(
     `\n[Work Context] Asking OpenClaw AI to summarize work from the last ${hoursBack} hours...`,
   );
 
   try {
-    // Dynamic imports for core OpenClaw modules
-    const { loadConfig } = await import("../../../src/config/config.js");
-    const { resolveOpenClawAgentDir } = await import("../../../src/agents/agent-paths.js");
-    const { resolveSessionTranscriptPath } = await import("../../../src/config/sessions.js");
-    const { DEFAULT_AGENT_ID } = await import("../../../src/routing/session-key.js");
-    const { DEFAULT_MODEL, DEFAULT_PROVIDER } = await import("../../../src/agents/defaults.js");
-    const { runEmbeddedPiAgent } = await import("../../../src/agents/pi-embedded.js");
-
-    const config = loadConfig();
-    const agentDir = resolveOpenClawAgentDir();
-    const workspaceDir = process.cwd();
+    const { config, agentDir, workspaceDir, runEmbeddedPiAgent, resolveSessionTranscriptPath, DEFAULT_AGENT_ID, DEFAULT_MODEL, DEFAULT_PROVIDER } = deps;
 
     // Create a temporary session for this query
     const sessionId = `work-context-${Date.now()}`;
@@ -86,8 +114,8 @@ Requirements:
     if (result.payloads && result.payloads.length > 0) {
       // Concatenate all text from payloads
       summary = result.payloads
-        .map((p) => p.text || "")
-        .filter((t) => t.length > 0)
+        .map((p: any) => p.text || "")
+        .filter((t: string) => t.length > 0)
         .join("\n")
         .trim();
     }
