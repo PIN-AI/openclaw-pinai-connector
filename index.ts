@@ -294,6 +294,9 @@ const pinaiConnectorPlugin = {
 
                 const { callGatewayMethod } = await import("./src/gateway-client.js");
 
+                // Get auth token from config
+                const authToken = ctx.config.gateway?.auth?.token;
+
                 try {
                   const result = await callGatewayMethod<{
                     success: boolean;
@@ -305,6 +308,7 @@ const pinaiConnectorPlugin = {
                   }>({
                     method: "desktop-connector.generate-qr",
                     params: {},
+                    token: authToken,
                     timeoutMs: 10000,
                   });
 
@@ -361,7 +365,7 @@ const pinaiConnectorPlugin = {
                   console.log(`   Connected at: ${new Date(savedRegistration.createdAt).toLocaleString()}\n`);
                 } else {
                   console.log("\n⚠️  PINAI Connector Status: Not connected");
-                  console.log("   Run 'openclaw pinai show-qr' to connect.\n");
+                  console.log("   Run 'openclaw pinai connect' to connect.\n");
                 }
               } catch (error) {
                 console.error(`\n❌ Error: ${String(error)}\n`);
