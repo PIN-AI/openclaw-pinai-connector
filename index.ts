@@ -272,8 +272,8 @@ const pinaiConnectorPlugin = {
         .description("PINAI Connector commands")
         .addCommand(
           ctx.program
-            .createCommand("show-qr")
-            .description("Display QR code for mobile app connection")
+            .createCommand("connect")
+            .description("Connect to PINAI mobile app via QR code")
             .action(async () => {
               try {
                 // Check if connector is already registered
