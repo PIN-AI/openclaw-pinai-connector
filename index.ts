@@ -265,6 +265,105 @@ const pinaiConnectorPlugin = {
       },
     });
 
+    // Register CLI commands
+    api.registerCli((ctx) => {
+      ctx.program
+        .command("pinai")
+        .description("PINAI Connector commands")
+        .addCommand(
+          ctx.program
+            .createCommand("show-qr")
+            .description("Display QR code for mobile app connection")
+            .action(async () => {
+              try {
+                // Check if connector is already registered
+                const { loadRegistration } = await import("./src/registration-store.js");
+                const savedRegistration = loadRegistration();
+
+                if (savedRegistration) {
+                  console.log("\n✅ Already connected to PINAI App");
+                  console.log(`   Connector ID: ${savedRegistration.connectorId}`);
+                  console.log(`   Device: ${savedRegistration.deviceName}`);
+                  console.log(`   Status: ${savedRegistration.status}\n`);
+                  console.log("No need to scan QR code again. Connection is active.\n");
+                  return;
+                }
+
+                // Generate new QR code
+                console.log("\n🔄 Generating QR code...\n");
+
+                const hostname = os.hostname();
+                const deviceName = `PINAI-Desktop-${hostname}`;
+                const { getDeviceId } = await import("./src/device-id.js");
+                const deviceId = getDeviceId();
+
+                const url = `${config.backendUrl}/connector/pinai/qr-token`;
+                const res = await fetch(url, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    device_name: deviceName,
+                    device_type: "desktop",
+                    device_id: deviceId,
+                  }),
+                });
+
+                if (!res.ok) {
+                  throw new Error(`Failed to generate QR code: ${res.status} ${res.statusText}`);
+                }
+
+                const data = (await res.json()) as {
+                  token: string;
+                  qr_data: string;
+                  expires_in: number;
+                };
+
+                const qrData = data.qr_data.includes("?")
+                  ? `${data.qr_data}&deviceId=${encodeURIComponent(deviceId)}`
+                  : `${data.qr_data}?deviceId=${encodeURIComponent(deviceId)}`;
+
+                console.log("=== Scan this QR code with PINAI App ===\n");
+                qrcode.generate(qrData, { small: true });
+                console.log("\nQR Code Details:");
+                console.log(`  Device: ${deviceName}`);
+                console.log(`  Device ID: ${deviceId}`);
+                console.log(`  Token: ${data.token.substring(0, 16)}...`);
+                console.log(`  Expires in: ${data.expires_in} seconds\n`);
+                console.log("After scanning, restart the gateway to activate the connection.\n");
+              } catch (error) {
+                console.error(`\n❌ Error: ${String(error)}\n`);
+                process.exit(1);
+              }
+            }),
+        )
+        .addCommand(
+          ctx.program
+            .createCommand("status")
+            .description("Show PINAI connector status")
+            .action(async () => {
+              try {
+                const { loadRegistration } = await import("./src/registration-store.js");
+                const savedRegistration = loadRegistration();
+
+                if (savedRegistration) {
+                  console.log("\n✅ PINAI Connector Status: Connected");
+                  console.log(`   Connector ID: ${savedRegistration.connectorId}`);
+                  console.log(`   Device: ${savedRegistration.deviceName}`);
+                  console.log(`   Status: ${savedRegistration.status}`);
+                  console.log(`   User ID: ${savedRegistration.userId || "N/A"}`);
+                  console.log(`   Connected at: ${new Date(savedRegistration.createdAt).toLocaleString()}\n`);
+                } else {
+                  console.log("\n⚠️  PINAI Connector Status: Not connected");
+                  console.log("   Run 'openclaw pinai show-qr' to connect.\n");
+                }
+              } catch (error) {
+                console.error(`\n❌ Error: ${String(error)}\n`);
+                process.exit(1);
+              }
+            }),
+        );
+    });
+
     // Register gateway methods
     api.registerGatewayMethod("desktop-connector.generate-qr", async ({ respond }) => {
       if (!connectorManager) {
