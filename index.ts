@@ -329,7 +329,67 @@ const pinaiConnectorPlugin = {
                 console.log(`  Device ID: ${deviceId}`);
                 console.log(`  Token: ${data.token.substring(0, 16)}...`);
                 console.log(`  Expires in: ${data.expires_in} seconds\n`);
-                console.log("After scanning, restart the gateway to activate the connection.\n");
+                console.log("⏳ Waiting for you to scan the QR code...\n");
+
+                // Poll for registration status
+                const maxAttempts = 60; // 5 minutes (60 * 5 seconds)
+                let attempts = 0;
+                let registered = false;
+
+                while (attempts < maxAttempts && !registered) {
+                  attempts++;
+
+                  try {
+                    const checkUrl = `${config.backendUrl}/connector/pinai/check-login-status?token=${encodeURIComponent(data.token)}`;
+                    const checkRes = await fetch(checkUrl);
+
+                    if (checkRes.ok) {
+                      const checkData = (await checkRes.json()) as {
+                        status: string;
+                        connector_id?: string;
+                        user_id?: string;
+                      };
+
+                      if (checkData.status === "registered" && checkData.connector_id) {
+                        // Registration successful! Save it
+                        const { saveRegistration } = await import("./src/registration-store.js");
+
+                        const registration = {
+                          connectorId: checkData.connector_id,
+                          deviceId,
+                          deviceName,
+                          userId: checkData.user_id || "",
+                          status: "connected" as const,
+                          createdAt: Date.now(),
+                          lastWorkContextReportTime: 0,
+                        };
+
+                        saveRegistration(registration);
+
+                        console.log("\n✅ Successfully connected to PINAI App!");
+                        console.log(`   Connector ID: ${registration.connectorId}`);
+                        console.log(`   User ID: ${registration.userId}`);
+                        console.log(`   Device: ${deviceName}\n`);
+                        console.log("🔄 Please restart the gateway to activate the connection:");
+                        console.log("   openclaw gateway restart\n");
+
+                        registered = true;
+                        break;
+                      }
+                    }
+                  } catch (pollError) {
+                    // Ignore polling errors, continue trying
+                  }
+
+                  // Wait 5 seconds before next poll
+                  await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+
+                if (!registered) {
+                  console.log("\n⏱️  QR code expired or scan timeout.");
+                  console.log("   Please run 'openclaw pinai connect' again to generate a new QR code.\n");
+                  process.exit(1);
+                }
               } catch (error) {
                 console.error(`\n❌ Error: ${String(error)}\n`);
                 process.exit(1);
