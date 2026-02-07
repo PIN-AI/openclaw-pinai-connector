@@ -13,6 +13,27 @@ export type GatewayCallOptions = {
   timeoutMs?: number;
 };
 
+type RequestFrame = {
+  type: "req";
+  id: string;
+  method: string;
+  params?: unknown;
+};
+
+type ResponseFrame = {
+  type: "res";
+  id: string;
+  ok: boolean;
+  payload?: unknown;
+  error?: { message?: string };
+};
+
+type EventFrame = {
+  type: "event";
+  event: string;
+  payload?: unknown;
+};
+
 export async function callGatewayMethod<T = unknown>(
   opts: GatewayCallOptions,
 ): Promise<T> {
@@ -22,6 +43,7 @@ export async function callGatewayMethod<T = unknown>(
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     let ws: WebSocket | null = null;
+    let connected = false;
 
     const cleanup = () => {
       if (ws) {
@@ -65,46 +87,68 @@ export async function callGatewayMethod<T = unknown>(
       ws.on("open", () => {
         if (!ws || settled) return;
 
-        // Send hello message
-        const helloMsg = {
-          type: "hello",
-          protocol: 1,
-          clientName: "pinai-cli",
-          clientVersion: "1.0.0",
-          instanceId: randomBytes(16).toString("hex"),
-          mode: "cli",
-          role: "operator",
-          scopes: ["operator.admin"],
-          ...(opts.token ? { token: opts.token } : {}),
+        // Send connect request
+        const connectId = randomBytes(8).toString("hex");
+        const connectFrame: RequestFrame = {
+          type: "req",
+          id: connectId,
+          method: "connect",
+          params: {
+            minProtocol: 1,
+            maxProtocol: 1,
+            client: {
+              id: "pinai-cli",
+              version: "1.0.0",
+              platform: process.platform,
+              mode: "cli",
+              instanceId: randomBytes(16).toString("hex"),
+            },
+            role: "operator",
+            scopes: ["operator.admin"],
+            caps: [],
+            ...(opts.token ? { auth: { token: opts.token } } : {}),
+          },
         };
 
-        ws.send(JSON.stringify(helloMsg));
+        ws.send(JSON.stringify(connectFrame));
       });
 
       ws.on("message", (data) => {
         if (settled) return;
 
         try {
-          const msg = JSON.parse(data.toString());
+          const msg = JSON.parse(data.toString()) as ResponseFrame | EventFrame;
 
-          if (msg.type === "hello-ok") {
-            // Send method call
-            const callMsg = {
-              type: "call",
-              id: randomBytes(8).toString("hex"),
-              method: opts.method,
-              params: opts.params || {},
-            };
-            ws?.send(JSON.stringify(callMsg));
-          } else if (msg.type === "result") {
-            // Got result
-            if (msg.ok) {
-              settle(undefined, msg.value as T);
+          if (msg.type === "event") {
+            // Ignore events for now
+            return;
+          }
+
+          if (msg.type === "res") {
+            if (!connected) {
+              // This is the connect response (hello-ok)
+              if (msg.ok) {
+                connected = true;
+                // Now send the actual method call
+                const callId = randomBytes(8).toString("hex");
+                const callFrame: RequestFrame = {
+                  type: "req",
+                  id: callId,
+                  method: opts.method,
+                  params: opts.params || {},
+                };
+                ws?.send(JSON.stringify(callFrame));
+              } else {
+                settle(new Error(msg.error?.message || "Connect failed"));
+              }
             } else {
-              settle(new Error(msg.error?.message || "Gateway method failed"));
+              // This is the method call response
+              if (msg.ok) {
+                settle(undefined, msg.payload as T);
+              } else {
+                settle(new Error(msg.error?.message || "Gateway method failed"));
+              }
             }
-          } else if (msg.type === "error") {
-            settle(new Error(msg.message || "Gateway error"));
           }
         } catch (error) {
           settle(new Error(`Failed to parse gateway message: ${error}`));
