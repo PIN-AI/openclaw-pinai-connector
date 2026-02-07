@@ -95,6 +95,17 @@ const pinaiConnectorPlugin = {
           // Initialize connector manager
           connectorManager = new DesktopConnectorManager(config);
 
+          // Set up work context dependencies for memory collection
+          connectorManager.setWorkContextDependencies({
+            runtime: api.runtime,
+            config: api.config,
+            agentSessionKey: undefined, // Use default agent
+          });
+
+          if (verbose) {
+            ctx.logger.info("[PINAI Connector] Work context dependencies configured");
+          }
+
           // Check if already registered from saved state
           const status = connectorManager.getStatus();
 

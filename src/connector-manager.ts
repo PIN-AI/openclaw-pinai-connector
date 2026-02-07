@@ -17,7 +17,7 @@ import type {
 import { getDeviceId } from "./device-id.js";
 import { isTokenValid } from "./qr-generator.js";
 import { loadRegistration, saveRegistration, clearRegistration } from "./registration-store.js";
-import { collectWorkContext, type WorkContextSummary } from "./work-context-collector.js";
+import { collectWorkContext, type WorkContextSummary, type WorkContextDependencies } from "./work-context-collector.js";
 
 export class DesktopConnectorManager extends EventEmitter {
   private config: DesktopConnectorConfig;
@@ -31,6 +31,7 @@ export class DesktopConnectorManager extends EventEmitter {
   private lastWorkContext: WorkContextSummary | null = null;
   private lastWorkContextReportTime: number = 0;
   private isCollectingWorkContext: boolean = false;
+  private workContextDeps: WorkContextDependencies | null = null;
 
   constructor(config: DesktopConnectorConfig) {
     super();
@@ -55,6 +56,13 @@ export class DesktopConnectorManager extends EventEmitter {
 
       this.emit("registered", this.registration);
     }
+  }
+
+  /**
+   * Set work context dependencies for memory collection
+   */
+  setWorkContextDependencies(deps: WorkContextDependencies): void {
+    this.workContextDeps = deps;
   }
 
   /**
@@ -608,7 +616,7 @@ export class DesktopConnectorManager extends EventEmitter {
       console.log("\n[Work Context] Starting collection...");
 
       // Collect work context from the last 6 hours
-      const workContext = await collectWorkContext(6);
+      const workContext = await collectWorkContext(6, this.workContextDeps || undefined);
       this.lastWorkContext = workContext;
 
       console.log(`[Work Context] Collected: ${workContext.summary.substring(0, 100)}...`);
