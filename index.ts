@@ -95,33 +95,6 @@ const pinaiConnectorPlugin = {
           // Initialize connector manager
           connectorManager = new DesktopConnectorManager(config);
 
-          // Set up work context dependencies (dynamic imports from OpenClaw core)
-          try {
-            const { runEmbeddedPiAgent } = await import("../../src/agents/pi-embedded.js");
-            const { resolveSessionTranscriptPath } = await import("../../src/config/sessions.js");
-            const { resolveOpenClawAgentDir } = await import("../../src/agents/agent-paths.js");
-            const { DEFAULT_AGENT_ID } = await import("../../src/routing/session-key.js");
-            const { DEFAULT_MODEL, DEFAULT_PROVIDER } = await import("../../src/agents/defaults.js");
-
-            connectorManager.setWorkContextDependencies({
-              config: ctx.config,
-              agentDir: resolveOpenClawAgentDir(),
-              workspaceDir: ctx.workspaceDir || process.cwd(),
-              runEmbeddedPiAgent,
-              resolveSessionTranscriptPath,
-              DEFAULT_AGENT_ID,
-              DEFAULT_MODEL,
-              DEFAULT_PROVIDER,
-            });
-
-            if (verbose) {
-              ctx.logger.info("[PINAI Connector] Work context dependencies configured");
-            }
-          } catch (depError) {
-            ctx.logger.warn(`[PINAI Connector] Could not load work context dependencies: ${depError}`);
-            ctx.logger.warn("[PINAI Connector] Work context collection will be disabled");
-          }
-
           // Check if already registered from saved state
           const status = connectorManager.getStatus();
 
