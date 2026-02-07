@@ -1,0 +1,45 @@
+{
+  "id": "pinai-connector",
+  "services": ["pinai-connector"],
+  "gatewayMethods": [
+    "desktop-connector.generate-qr",
+    "desktop-connector.status",
+    "desktop-connector.disconnect"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable PINAI Connector"
+      },
+      "backendUrl": {
+        "type": "string",
+        "default": "https://dev-mining.api.pinai.tech",
+        "description": "PINAI backend API URL"
+      },
+      "heartbeatIntervalMs": {
+        "type": "number",
+        "default": 30000,
+        "description": "Heartbeat interval in milliseconds"
+      },
+      "qrCodeTimeoutMs": {
+        "type": "number",
+        "default": 300000,
+        "description": "QR code expiration timeout in milliseconds"
+      },
+      "showQrCode": {
+        "type": "boolean",
+        "default": true,
+        "description": "Display QR code in console"
+      },
+      "verbose": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable verbose logging"
+      }
+    }
+  }
+}
