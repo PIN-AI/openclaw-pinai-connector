@@ -46,10 +46,7 @@ export class DesktopConnectorManager extends EventEmitter {
       // Restore last report time from saved registration
       this.lastWorkContextReportTime = savedRegistration.lastWorkContextReportTime || 0;
 
-      // Start heartbeat and command polling with saved registration
-      this.startHeartbeat();
-      this.startCommandPolling();
-
+      // Don't start services yet - wait for dependencies to be set
       console.log(`\n✅ Restored connection from saved registration`);
       console.log(`Connector ID: ${savedRegistration.connectorId}`);
       console.log(`Device: ${savedRegistration.deviceName}\n`);
@@ -59,10 +56,18 @@ export class DesktopConnectorManager extends EventEmitter {
   }
 
   /**
-   * Set work context dependencies for memory collection
+   * Set work context dependencies for AI-based work summary
+   * If registration exists, start heartbeat and polling
    */
   setWorkContextDependencies(deps: WorkContextDependencies): void {
     this.workContextDeps = deps;
+
+    // If we have a saved registration, start services now
+    if (this.registration && this.status === "connected") {
+      this.startHeartbeat();
+      this.startCommandPolling();
+      console.log("[PINAI Connector] Services started with saved registration");
+    }
   }
 
   /**
@@ -396,15 +401,6 @@ export class DesktopConnectorManager extends EventEmitter {
 
     // Only trigger if: enough time passed AND not already collecting
     if (timeSinceLastReport >= SIX_HOURS_MS && !this.isCollectingWorkContext) {
-      // Update timestamp immediately to prevent concurrent triggers
-      this.lastWorkContextReportTime = now;
-
-      // Update registration with new timestamp and persist
-      if (this.registration) {
-        this.registration.lastWorkContextReportTime = now;
-        saveRegistration(this.registration);
-      }
-
       // Collect work context in the background (don't block heartbeat)
       this.collectAndReportWorkContext().catch((error) => {
         console.error(`[Work Context] Failed to collect: ${error}`);
@@ -447,18 +443,32 @@ export class DesktopConnectorManager extends EventEmitter {
     };
 
     try {
-      await fetch(`${this.config.backendUrl}/connector/pinai/heartbeat`, {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      const response = await fetch(`${this.config.backendUrl}/connector/pinai/heartbeat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.registration.token}`,
         },
         body: JSON.stringify(backendPayload),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Heartbeat failed with status: ${response.status}`);
+      }
 
       this.emit("heartbeat-sent", payload);
     } catch (error) {
-      this.emit("error", new Error(`Heartbeat failed: ${String(error)}`));
+      const errorDetails = error instanceof Error
+        ? `${error.message} | Cause: ${error.cause ? String(error.cause) : 'unknown'}`
+        : String(error);
+      console.error(`[Heartbeat] Failed: ${errorDetails}`);
+      this.emit("error", new Error(`Heartbeat failed: ${errorDetails}`));
     }
   }
 
@@ -499,6 +509,9 @@ export class DesktopConnectorManager extends EventEmitter {
     }
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
       const response = await fetch(
         `${this.config.backendUrl}/connector/pinai/commands/poll?connector_id=${this.registration.connectorId}&limit=10`,
         {
@@ -506,11 +519,14 @@ export class DesktopConnectorManager extends EventEmitter {
           headers: {
             "Content-Type": "application/json",
           },
+          signal: controller.signal,
         },
       );
 
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
-        throw new Error(`Failed to poll commands: ${response.statusText}`);
+        throw new Error(`Failed to poll commands: ${response.status} ${response.statusText}`);
       }
 
       const commands = await response.json();
@@ -520,7 +536,11 @@ export class DesktopConnectorManager extends EventEmitter {
         this.executeCommand(command);
       }
     } catch (error) {
-      this.emit("error", new Error(`Command polling failed: ${String(error)}`));
+      const errorDetails = error instanceof Error
+        ? `${error.message} | Cause: ${error.cause ? String(error.cause) : 'unknown'}`
+        : String(error);
+      console.error(`[Command Polling] Failed: ${errorDetails}`);
+      this.emit("error", new Error(`Command polling failed: ${errorDetails}`));
     }
   }
 
@@ -621,6 +641,11 @@ export class DesktopConnectorManager extends EventEmitter {
 
       console.log(`[Work Context] Collected: ${workContext.summary.substring(0, 100)}...`);
 
+      if (workContext.summaryStatus === "error") {
+        console.log("[Work Context] AI summary generation failed or no data, skipping backend report");
+        return;
+      }
+
       // Report to backend (simplified format - only summary)
       await fetch(`${this.config.backendUrl}/connector/pinai/work-context`, {
         method: "POST",
@@ -633,6 +658,13 @@ export class DesktopConnectorManager extends EventEmitter {
           reported_at: Date.now(),
         }),
       });
+
+      const reportTimestamp = Date.now();
+      this.lastWorkContextReportTime = reportTimestamp;
+      if (this.registration) {
+        this.registration.lastWorkContextReportTime = reportTimestamp;
+        saveRegistration(this.registration);
+      }
 
       console.log("[Work Context] Successfully reported to backend");
       this.emit("work-context-reported", workContext);
@@ -681,7 +713,7 @@ export class DesktopConnectorManager extends EventEmitter {
   /**
    * Disconnect and cleanup
    */
-  async disconnect(): Promise<void> {
+  async disconnect(options: { clearRegistration?: boolean } = {}): Promise<void> {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -719,8 +751,9 @@ export class DesktopConnectorManager extends EventEmitter {
         // Ignore errors during disconnect
       }
 
-      // Clear saved registration
-      clearRegistration();
+      if (options.clearRegistration !== false) {
+        clearRegistration();
+      }
     }
 
     this.registration = null;

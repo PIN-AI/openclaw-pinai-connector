@@ -3,7 +3,7 @@
  * Persists Desktop Connector registration info to local filesystem
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ConnectorRegistration } from "./types.js";
@@ -64,7 +64,7 @@ export function loadRegistration(): ConnectorRegistration | null {
 export function clearRegistration(): void {
   try {
     if (existsSync(REGISTRATION_FILE)) {
-      writeFileSync(REGISTRATION_FILE, "", "utf-8");
+      unlinkSync(REGISTRATION_FILE);
       console.log("[Registration] Cleared saved registration");
     }
   } catch (error) {

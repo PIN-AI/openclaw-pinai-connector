@@ -58,6 +58,11 @@ type ExtensionApi = {
 let coreRootCache: string | null = null;
 let coreDepsPromise: Promise<CoreAgentDeps> | null = null;
 
+type ProviderModel = {
+  provider: string;
+  model: string;
+};
+
 function findPackageRoot(startDir: string, name: string): string | null {
   let dir = startDir;
   for (;;) {
@@ -201,4 +206,62 @@ export async function loadCoreAgentDeps(): Promise<CoreAgentDeps> {
   })();
 
   return coreDepsPromise;
+}
+
+function parseModelRef(value: unknown): Partial<ProviderModel> | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.includes("/")) {
+      const [provider, model] = trimmed.split("/", 2);
+      return { provider: provider.trim(), model: model.trim() };
+    }
+    return { model: trimmed };
+  }
+
+  if (value && typeof value === "object") {
+    const maybe = value as {
+      id?: unknown;
+      primary?: unknown;
+      provider?: unknown;
+      model?: unknown;
+      name?: unknown;
+    };
+    if (typeof maybe.id === "string") {
+      return parseModelRef(maybe.id);
+    }
+    if (typeof maybe.primary === "string") {
+      return parseModelRef(maybe.primary);
+    }
+    const provider = typeof maybe.provider === "string" ? maybe.provider : undefined;
+    const model =
+      typeof maybe.model === "string" ? maybe.model : typeof maybe.name === "string" ? maybe.name : undefined;
+    if (provider || model) {
+      return { provider, model };
+    }
+  }
+
+  return null;
+}
+
+export function resolveProviderModel(
+  config: CoreConfig,
+  fallback: ProviderModel,
+): ProviderModel {
+  const defaults =
+    (config as { agents?: { defaults?: { model?: unknown } } })?.agents?.defaults?.model;
+  const primary =
+    (defaults as { primary?: unknown })?.primary ??
+    (defaults as { default?: unknown })?.default ??
+    defaults;
+  const parsed = parseModelRef(primary);
+  if (!parsed) {
+    return fallback;
+  }
+  return {
+    provider: parsed.provider?.trim() || fallback.provider,
+    model: parsed.model?.trim() || fallback.model,
+  };
 }

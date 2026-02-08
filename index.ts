@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import qrcode from "qrcode-terminal";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { DesktopConnectorManager } from "./src/connector-manager.js";
-import { loadCoreAgentDeps } from "./src/core-bridge.js";
+import { loadCoreAgentDeps, resolveProviderModel } from "./src/core-bridge.js";
 import type { DesktopConnectorConfig } from "./src/types.js";
 
 const pinaiConnectorPlugin = {
@@ -162,6 +162,11 @@ const pinaiConnectorPlugin = {
                 console.log(`[PINAI Command] Executing with OpenClaw AI...`);
               }
 
+              const { provider, model } = resolveProviderModel(ctx.config, {
+                provider: coreDeps.DEFAULT_PROVIDER,
+                model: coreDeps.DEFAULT_MODEL,
+              });
+
               const result = await coreDeps.runEmbeddedPiAgent({
                 sessionId,
                 sessionFile,
@@ -169,8 +174,8 @@ const pinaiConnectorPlugin = {
                 agentDir,
                 config: ctx.config,
                 prompt: data.prompt,
-                provider: coreDeps.DEFAULT_PROVIDER,
-                model: coreDeps.DEFAULT_MODEL,
+                provider,
+                model,
                 thinkLevel: "low",
                 timeoutMs: 120000, // 2 minutes timeout
                 runId: crypto.randomUUID(),
@@ -260,7 +265,7 @@ const pinaiConnectorPlugin = {
 
       async stop(ctx) {
         if (connectorManager) {
-          await connectorManager.disconnect();
+          await connectorManager.disconnect({ clearRegistration: false });
           connectorManager = null;
           ctx.logger.info("[PINAI Connector] Service stopped");
         }

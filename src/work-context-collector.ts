@@ -4,7 +4,7 @@
  */
 
 import crypto from "node:crypto";
-import { loadCoreAgentDeps } from "./core-bridge.js";
+import { loadCoreAgentDeps, resolveProviderModel } from "./core-bridge.js";
 
 export type WorkContextSummary = {
   period: {
@@ -23,6 +23,8 @@ export type WorkContextSummary = {
     keyTopics: string[];
   };
   summary: string;
+  summaryStatus?: "ok" | "no_data" | "error";
+  summaryError?: string;
 };
 
 export type WorkContextDependencies = {
@@ -47,6 +49,8 @@ export async function collectWorkContext(
       sessions: { total: 0, recentFiles: [] },
       activity: { tasksCompleted: [], filesModified: [], commandsRun: [], keyTopics: [] },
       summary: "Work context collection unavailable (dependencies not provided)",
+      summaryStatus: "error",
+      summaryError: "missing_dependencies",
     };
   }
 
@@ -67,7 +71,12 @@ export async function collectWorkContext(
     const agentDir = coreDeps.resolveAgentDir(config, agentId);
 
     // Ask AI to summarize work from memory
-    const prompt = `请根据你的记忆，简要总结我过去 ${hoursBack} 小时的工作内容、完成的任务和当前进展。如果没有相关记忆，请回复"无工作记录"。请用中文回答，控制在 200 字以内。`;
+    const prompt = `Based on your memory, briefly summarize my work in the past ${hoursBack} hours, including completed tasks and current progress. If you have no relevant memory, reply exactly with "No work record". Respond in English within 200 words.`;
+
+    const { provider, model } = resolveProviderModel(config, {
+      provider: coreDeps.DEFAULT_PROVIDER,
+      model: coreDeps.DEFAULT_MODEL,
+    });
 
     const result = await coreDeps.runEmbeddedPiAgent({
       sessionId,
@@ -76,34 +85,48 @@ export async function collectWorkContext(
       agentDir,
       config,
       prompt,
-      provider: coreDeps.DEFAULT_PROVIDER,
-      model: coreDeps.DEFAULT_MODEL,
+      provider,
+      model,
       thinkLevel: "low",
-      timeoutMs: 30000, // 30 seconds timeout
+      timeoutMs: 300000, // 5 minutes timeout
       runId: crypto.randomUUID(),
     });
 
-    // Extract response from payloads
-    let summary = "";
-    if (result.payloads && result.payloads.length > 0) {
-      summary = result.payloads
-        .map((p) => p.text || "")
-        .filter((t) => t.length > 0)
-        .join("\n")
-        .trim();
+    const payloads = result.payloads ?? [];
+    const hasErrorPayload = payloads.some((p) => p.isError);
+    const summary = payloads
+      .map((p) => p.text || "")
+      .filter((t) => t.length > 0)
+      .join("\n")
+      .trim();
+    const summaryIsEmpty = !summary || summary.length < 5;
+    let summaryStatus: WorkContextSummary["summaryStatus"] = "ok";
+    let summaryError: string | undefined;
+    let finalSummary = summary;
+
+    if (result.meta?.aborted) {
+      summaryStatus = "error";
+      summaryError = "aborted";
+    } else if (hasErrorPayload) {
+      summaryStatus = "error";
+      summaryError = "payload_error";
+    } else if (summaryIsEmpty) {
+      summaryStatus = "error";
+      summaryError = "empty_summary";
+      finalSummary = "AI failed to generate work summary";
+    } else if (summary === "No work record") {
+      summaryStatus = "no_data";
     }
 
-    if (!summary || summary.length < 5) {
-      summary = "AI failed to generate work summary";
-    }
-
-    console.log(`[Work Context] AI summary generated (${summary.length} chars)`);
+    console.log(`[Work Context] AI summary generated (${finalSummary.length} chars)`);
 
     return {
       period: { startTime, endTime, durationHours: hoursBack },
       sessions: { total: 0, recentFiles: [] },
       activity: { tasksCompleted: [], filesModified: [], commandsRun: [], keyTopics: [] },
-      summary,
+      summary: finalSummary,
+      summaryStatus,
+      summaryError,
     };
   } catch (error) {
     console.error(`[Work Context] Failed to generate AI summary: ${error}`);
@@ -112,6 +135,8 @@ export async function collectWorkContext(
       sessions: { total: 0, recentFiles: [] },
       activity: { tasksCompleted: [], filesModified: [], commandsRun: [], keyTopics: [] },
       summary: `Unable to generate work summary: ${error instanceof Error ? error.message : String(error)}`,
+      summaryStatus: "error",
+      summaryError: error instanceof Error ? error.message : String(error),
     };
   }
 }
