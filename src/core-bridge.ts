@@ -41,6 +41,20 @@ type CoreAgentDeps = {
   DEFAULT_AGENT_ID: string;
 };
 
+type ExtensionApi = {
+  resolveAgentDir: CoreAgentDeps["resolveAgentDir"];
+  resolveAgentWorkspaceDir: CoreAgentDeps["resolveAgentWorkspaceDir"];
+  ensureAgentWorkspace: CoreAgentDeps["ensureAgentWorkspace"];
+  resolveSessionFilePath: (
+    sessionId: string,
+    entry?: unknown,
+    opts?: { agentId?: string },
+  ) => string;
+  runEmbeddedPiAgent: CoreAgentDeps["runEmbeddedPiAgent"];
+  DEFAULT_MODEL: string;
+  DEFAULT_PROVIDER: string;
+};
+
 let coreRootCache: string | null = null;
 let coreDepsPromise: Promise<CoreAgentDeps> | null = null;
 
@@ -111,12 +125,39 @@ async function importCoreModule<T>(relativePath: string): Promise<T> {
   return (await import(pathToFileURL(distPath).href)) as T;
 }
 
+async function loadExtensionApiDeps(): Promise<CoreAgentDeps | null> {
+  const root = resolveOpenClawRoot();
+  const extPath = path.join(root, "dist", "extensionAPI.js");
+  if (!fs.existsSync(extPath)) {
+    return null;
+  }
+
+  const ext = (await import(pathToFileURL(extPath).href)) as ExtensionApi;
+
+  return {
+    resolveAgentDir: ext.resolveAgentDir,
+    resolveAgentWorkspaceDir: ext.resolveAgentWorkspaceDir,
+    ensureAgentWorkspace: ext.ensureAgentWorkspace,
+    resolveSessionTranscriptPath: (sessionId, agentId) =>
+      ext.resolveSessionFilePath(sessionId, undefined, { agentId }),
+    runEmbeddedPiAgent: ext.runEmbeddedPiAgent,
+    DEFAULT_MODEL: ext.DEFAULT_MODEL,
+    DEFAULT_PROVIDER: ext.DEFAULT_PROVIDER,
+    DEFAULT_AGENT_ID: "main",
+  };
+}
+
 export async function loadCoreAgentDeps(): Promise<CoreAgentDeps> {
   if (coreDepsPromise) {
     return coreDepsPromise;
   }
 
   coreDepsPromise = (async () => {
+    const extensionApiDeps = await loadExtensionApiDeps();
+    if (extensionApiDeps) {
+      return extensionApiDeps;
+    }
+
     const [
       agentScope,
       workspace,
