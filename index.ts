@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import qrcode from "qrcode-terminal";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { DesktopConnectorManager } from "./src/connector-manager.js";
+import { loadCoreAgentDeps } from "./src/core-bridge.js";
 import type { DesktopConnectorConfig } from "./src/types.js";
 
 const pinaiConnectorPlugin = {
@@ -95,11 +96,10 @@ const pinaiConnectorPlugin = {
           // Initialize connector manager
           connectorManager = new DesktopConnectorManager(config);
 
-          // Set up work context dependencies for memory collection
+          // Set up work context dependencies for AI-based work summary
           connectorManager.setWorkContextDependencies({
-            runtime: api.runtime,
             config: api.config,
-            agentSessionKey: undefined, // Use default agent
+            workspaceDir: ctx.workspaceDir || process.cwd(),
           });
 
           if (verbose) {
@@ -147,39 +147,30 @@ const pinaiConnectorPlugin = {
             }
 
             try {
-              // Execute the prompt using OpenClaw's embedded agent
-              const { runEmbeddedPiAgent } = await import(
-                "../../src/agents/pi-embedded.js"
-              );
-              const { resolveSessionTranscriptPath } = await import(
-                "../../src/config/sessions.js"
-              );
-              const { resolveOpenClawAgentDir } = await import(
-                "../../src/agents/agent-paths.js"
-              );
-              const { DEFAULT_AGENT_ID } = await import("../../src/routing/session-key.js");
-              const { DEFAULT_MODEL, DEFAULT_PROVIDER } = await import(
-                "../../src/agents/defaults.js"
-              );
-
+              const coreDeps = await loadCoreAgentDeps();
+              const agentId = coreDeps.DEFAULT_AGENT_ID;
               const sessionId = `pinai-command-${data.commandId}`;
-              const sessionFile = resolveSessionTranscriptPath(sessionId, DEFAULT_AGENT_ID);
-              const agentDir = resolveOpenClawAgentDir();
-              const workspaceDir = ctx.workspaceDir || process.cwd();
+              const workspaceDir =
+                ctx.workspaceDir?.trim() || coreDeps.resolveAgentWorkspaceDir(ctx.config, agentId);
+
+              await coreDeps.ensureAgentWorkspace({ dir: workspaceDir });
+
+              const sessionFile = coreDeps.resolveSessionTranscriptPath(sessionId, agentId);
+              const agentDir = coreDeps.resolveAgentDir(ctx.config, agentId);
 
               if (verbose) {
                 console.log(`[PINAI Command] Executing with OpenClaw AI...`);
               }
 
-              const result = await runEmbeddedPiAgent({
+              const result = await coreDeps.runEmbeddedPiAgent({
                 sessionId,
                 sessionFile,
                 workspaceDir,
                 agentDir,
                 config: ctx.config,
                 prompt: data.prompt,
-                provider: DEFAULT_PROVIDER,
-                model: DEFAULT_MODEL,
+                provider: coreDeps.DEFAULT_PROVIDER,
+                model: coreDeps.DEFAULT_MODEL,
                 thinkLevel: "low",
                 timeoutMs: 120000, // 2 minutes timeout
                 runId: crypto.randomUUID(),
