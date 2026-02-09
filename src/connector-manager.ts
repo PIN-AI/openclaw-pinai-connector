@@ -772,7 +772,11 @@ export class DesktopConnectorManager extends EventEmitter {
    * Disconnect and cleanup
    */
   async disconnect(
-    options: { clearRegistration?: boolean; watchForRegistration?: boolean } = {},
+    options: {
+      clearRegistration?: boolean;
+      watchForRegistration?: boolean;
+      deleteRemote?: boolean;
+    } = {},
   ): Promise<void> {
     this.stopRegistrationWatcher();
 
@@ -796,24 +800,34 @@ export class DesktopConnectorManager extends EventEmitter {
       this.ws = null;
     }
 
+    let remoteOk = false;
     if (this.registration) {
       // Notify backend of disconnection
       try {
-        await fetch(`${this.config.backendUrl}/connector/pinai/disconnect`, {
+        const response = await fetch(`${this.config.backendUrl}/connector/pinai/disconnect`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.registration.token}`,
           },
           body: JSON.stringify({
-            connectorId: this.registration.connectorId,
+            connector_id: this.registration.connectorId,
+            delete: options.deleteRemote === true,
           }),
         });
+        remoteOk = response.ok;
+        if (!response.ok) {
+          console.error(
+            `[PINAI Connector] Failed to disconnect: ${response.status} ${response.statusText}`,
+          );
+        }
       } catch {
         // Ignore errors during disconnect
       }
 
-      if (options.clearRegistration !== false) {
+      const shouldClear = options.clearRegistration !== false;
+      const needsRemoteSuccess = options.deleteRemote === true;
+      if (shouldClear && (!needsRemoteSuccess || remoteOk)) {
         clearRegistration();
       }
     }

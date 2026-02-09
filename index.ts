@@ -437,6 +437,50 @@ const pinaiConnectorPlugin = {
                 process.exit(1);
               }
             }),
+        )
+        .addCommand(
+          ctx.program
+            .createCommand("disconnect")
+            .description("Disconnect and delete PINAI connector registration")
+            .action(async () => {
+              try {
+                const { loadRegistration, clearRegistration } = await import(
+                  "./src/registration-store.js"
+                );
+                const savedRegistration = loadRegistration();
+
+                if (!savedRegistration) {
+                  console.log("\n⚠️  PINAI Connector: Not connected");
+                  console.log("   Run 'openclaw pinai connect' to connect.\n");
+                  return;
+                }
+
+                const res = await fetch(`${config.backendUrl}/connector/pinai/disconnect`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${savedRegistration.token}`,
+                  },
+                  body: JSON.stringify({
+                    connector_id: savedRegistration.connectorId,
+                    delete: true,
+                  }),
+                });
+
+                if (!res.ok) {
+                  const text = await res.text();
+                  throw new Error(`Failed to disconnect: ${res.status} ${text}`);
+                }
+
+                clearRegistration();
+
+                console.log("\n✅ PINAI Connector disconnected and removed");
+                console.log("   If the gateway is running, restart it to stop the connector.\n");
+              } catch (error) {
+                console.error(`\n❌ Error: ${String(error)}\n`);
+                process.exit(1);
+              }
+            }),
         );
     });
 
