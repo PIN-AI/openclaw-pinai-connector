@@ -519,6 +519,10 @@ const pinaiConnectorPlugin = {
                   return;
                 }
 
+                console.log("\n=== Work Context (preview) ===\n");
+                console.log(workContext.summary);
+                console.log("\n=== End Work Context ===\n");
+
                 const res = await fetch(`${config.backendUrl}/connector/pinai/work-context`, {
                   method: "POST",
                   headers: {
