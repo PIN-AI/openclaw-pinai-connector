@@ -70,6 +70,7 @@ type LocalContext = {
   conversations: {
     totalMessages: number;
     totalUserMessages: number;
+    totalAssistantMessages: number;
     excerpts: Array<{
       role: string;
       text: string;
@@ -83,6 +84,12 @@ type LocalContext = {
     head?: string;
     changesSince?: {
       sinceMs?: number;
+      commits: Array<{
+        hash: string;
+        date: string;
+        subject: string;
+        files: string[];
+      }>;
       committed: string[];
       uncommitted: string[];
       truncated: boolean;
@@ -97,8 +104,9 @@ const MAX_SESSION_FILES = 50;
 const MAX_CONTEXT_CHARS = 12000;
 const MAX_GIT_FILES = 200;
 const MAX_MESSAGE_CHARS = 400;
-const MAX_MESSAGE_ITEMS = 120;
+const MAX_MESSAGE_ITEMS = 160;
 const MAX_CONVERSATION_FILES = 20;
+const MAX_GIT_COMMITS = 30;
 
 const DEFAULT_SKIP_DIRS = new Set([
   ".git",
@@ -214,6 +222,7 @@ async function collectConversationExcerpts(agentId: string): Promise<LocalContex
   const result: LocalContext["conversations"] = {
     totalMessages: 0,
     totalUserMessages: 0,
+    totalAssistantMessages: 0,
     excerpts: [],
     truncated: false,
   };
@@ -287,9 +296,11 @@ async function collectConversationExcerpts(agentId: string): Promise<LocalContex
       result.totalMessages += 1;
       if (role === "user") {
         result.totalUserMessages += 1;
+      } else if (role === "assistant") {
+        result.totalAssistantMessages += 1;
       }
 
-      if (role !== "user") {
+      if (role !== "user" && role !== "assistant") {
         continue;
       }
 
@@ -332,31 +343,58 @@ async function collectGitChanges(
   const head = headResult?.stdout.trim();
 
   const committed: string[] = [];
+  const commits: Array<{ hash: string; date: string; subject: string; files: string[] }> = [];
   let truncated = false;
 
   if (sinceMs && sinceMs > 0) {
     const sinceIso = new Date(sinceMs).toISOString();
     const logResult = await runGit(
-      ["log", "--name-only", "--since", sinceIso, "--pretty=format:"],
+      ["log", "--name-status", "--since", sinceIso, "--date=iso", "--pretty=format:%H|%ad|%s"],
       workspaceDir,
     );
     if (logResult?.stdout) {
       const seen = new Set<string>();
+      let current: { hash: string; date: string; subject: string; files: string[] } | null = null;
       for (const line of logResult.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) {
           continue;
         }
-        const normalized = normalizeGitPath(trimmed);
+        if (trimmed.includes("|") && trimmed.split("|").length >= 3) {
+          if (current) {
+            commits.push(current);
+            if (commits.length >= MAX_GIT_COMMITS) {
+              truncated = true;
+              break;
+            }
+          }
+          const [hash, date, subject] = trimmed.split("|");
+          current = {
+            hash: hash ?? "",
+            date: date ?? "",
+            subject: subject ?? "",
+            files: [],
+          };
+          continue;
+        }
+        if (!current) {
+          continue;
+        }
+        const filePart = trimmed.split("\t").slice(1).join("\t").trim();
+        const normalized = normalizeGitPath(filePart || trimmed);
         if (!normalized || seen.has(normalized)) {
           continue;
         }
         seen.add(normalized);
         committed.push(normalized);
+        current.files.push(normalized);
         if (committed.length >= MAX_GIT_FILES) {
           truncated = true;
           break;
         }
+      }
+      if (!truncated && current) {
+        commits.push(current);
       }
     }
   }
@@ -388,6 +426,7 @@ async function collectGitChanges(
     head,
     changesSince: {
       sinceMs,
+      commits,
       committed,
       uncommitted,
       truncated,
@@ -564,13 +603,14 @@ function summarizeLocalContext(context: LocalContext): string {
   }
 
   lines.push("");
-  lines.push("Recent user messages:");
+  lines.push("Recent conversations:");
   lines.push(`- Total user messages: ${context.conversations.totalUserMessages}`);
+  lines.push(`- Total assistant messages: ${context.conversations.totalAssistantMessages}`);
   lines.push(`- Total messages: ${context.conversations.totalMessages}`);
   lines.push(`- Truncated: ${context.conversations.truncated ? "yes" : "no"}`);
-  for (const entry of context.conversations.excerpts.slice(0, 50)) {
+  for (const entry of context.conversations.excerpts.slice(0, 60)) {
     const timestamp = entry.timestamp ? formatTime(entry.timestamp) : "unknown time";
-    lines.push(`- [${timestamp}] ${entry.text}`);
+    lines.push(`- [${timestamp}] (${entry.role}) ${entry.text}`);
   }
 
   const stats = context.fileStats;
@@ -591,16 +631,7 @@ function summarizeLocalContext(context: LocalContext): string {
   }
 
   lines.push("");
-  lines.push("Most recently modified files:");
-  for (const entry of stats.recentFiles.slice(0, 30)) {
-    lines.push(`- ${entry.path} | ${formatTime(entry.mtimeMs)} | ${formatBytes(entry.size)}`);
-  }
-
-  lines.push("");
-  lines.push("Largest files:");
-  for (const entry of stats.largestFiles.slice(0, 20)) {
-    lines.push(`- ${entry.path} | ${formatBytes(entry.size)} | ${formatTime(entry.mtimeMs)}`);
-  }
+  lines.push("File scan details omitted (focus on conversations and git changes).");
 
   lines.push("");
   lines.push("Sessions:");
@@ -608,10 +639,7 @@ function summarizeLocalContext(context: LocalContext): string {
   lines.push(`- Truncated: ${context.sessions.truncated ? "yes" : "no"}`);
   lines.push(`- Oldest session: ${formatTime(context.sessions.oldestMtimeMs)}`);
   lines.push(`- Newest session: ${formatTime(context.sessions.newestMtimeMs)}`);
-  lines.push("Recent session files:");
-  for (const entry of context.sessions.recent.slice(0, 20)) {
-    lines.push(`- ${entry.file} | ${formatTime(entry.mtimeMs)} | ${formatBytes(entry.size)}`);
-  }
+  lines.push("Session file list omitted.");
 
   if (context.git?.root) {
     lines.push("");
@@ -626,6 +654,15 @@ function summarizeLocalContext(context: LocalContext): string {
         `- Changes since last report: ${since ? formatTime(since) : "N/A"}`,
       );
       lines.push(`- Truncated: ${context.git.changesSince.truncated ? "yes" : "no"}`);
+      if (context.git.changesSince.commits.length > 0) {
+        lines.push("Recent commits:");
+        for (const commit of context.git.changesSince.commits.slice(0, 20)) {
+          lines.push(`- ${commit.hash.slice(0, 8)} | ${commit.date} | ${commit.subject}`);
+          if (commit.files.length > 0) {
+            lines.push(`  files: ${commit.files.slice(0, 20).join(", ")}`);
+          }
+        }
+      }
       if (context.git.changesSince.committed.length > 0) {
         lines.push("Committed changes:");
         for (const file of context.git.changesSince.committed.slice(0, 50)) {
@@ -740,9 +777,16 @@ export async function collectWorkContext(
 
         const promptTime = fullScan ? "all available history" : `the past ${hoursBack} hours`;
         const prompt = [
-          `Summarize the user's work context based on the local snapshot below (${promptTime}).`,
-          "Include concrete details (files, tasks, progress, key topics).",
-          "Respond in concise markdown and keep important file paths.",
+          `Summarize the user's recent work context and interests based on the local snapshot below (${promptTime}).`,
+          "Focus on: what the user is trying to achieve, what they asked recently, what they care about, and what the assistant did.",
+          "Use the conversation excerpts to infer intent and interests; use git commits to infer ongoing development work.",
+          "Output markdown with these sections:",
+          "1) Recent focus (3-6 bullets)",
+          "2) Interests & recurring topics (3-8 bullets)",
+          "3) Active tasks / pending requests (bullets)",
+          "4) Actions already taken by assistant (bullets)",
+          "5) Git changes summary (if any, 3-6 bullets)",
+          "Keep it concise and avoid listing raw files unless necessary.",
           "",
           "Local snapshot:",
           trimmedContext,
@@ -793,10 +837,9 @@ export async function collectWorkContext(
     }
 
     const summaryHeader = "## Work Context Summary";
-    const rawHeader = "## Raw Context (local snapshot)";
     const combinedSummary = aiSummary
-      ? `${summaryHeader}\n${aiSummary}\n\n${rawHeader}\n${trimmedContext}`
-      : `${rawHeader}\n${trimmedContext}`;
+      ? `${summaryHeader}\n${aiSummary}`
+      : `## Raw Context (local snapshot)\n${trimmedContext}`;
     const finalSummary = truncateText(combinedSummary, MAX_CONTEXT_CHARS);
 
     console.log(`[Work Context] Summary generated (${finalSummary.length} chars)`);
