@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { ConnectorRegistration } from "./types.js";
 
 const OPENCLAW_DIR = join(homedir(), ".openclaw");
-const REGISTRATION_FILE = join(OPENCLAW_DIR, "pinai-connector-registration.json");
+export const REGISTRATION_FILE = join(OPENCLAW_DIR, "pinai-connector-registration.json");
 
 /**
  * Save registration info to local file

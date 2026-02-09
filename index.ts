@@ -265,7 +265,7 @@ const pinaiConnectorPlugin = {
 
       async stop(ctx) {
         if (connectorManager) {
-          await connectorManager.disconnect({ clearRegistration: false });
+          await connectorManager.disconnect({ clearRegistration: false, watchForRegistration: false });
           connectorManager = null;
           ctx.logger.info("[PINAI Connector] Service stopped");
         }
@@ -384,7 +384,9 @@ const pinaiConnectorPlugin = {
                         console.log(`   Connector ID: ${registration.connectorId}`);
                         console.log(`   User ID: ${registration.userId}`);
                         console.log(`   Device: ${deviceName}\n`);
-                        console.log("🔄 Please restart the gateway to activate the connection:");
+                        console.log("✅ Connection saved.");
+                        console.log("   If the gateway is running, it should activate within a few seconds.");
+                        console.log("   If not, start or restart the gateway:");
                         console.log("   openclaw gateway restart\n");
 
                         registered = true;

@@ -4,6 +4,8 @@
  */
 
 import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
+import { basename, dirname } from "node:path";
 import { WebSocket } from "ws";
 import type {
   CommandPayload,
@@ -16,7 +18,12 @@ import type {
 } from "./types.js";
 import { getDeviceId } from "./device-id.js";
 import { isTokenValid } from "./qr-generator.js";
-import { loadRegistration, saveRegistration, clearRegistration } from "./registration-store.js";
+import {
+  clearRegistration,
+  loadRegistration,
+  REGISTRATION_FILE,
+  saveRegistration,
+} from "./registration-store.js";
 import { collectWorkContext, type WorkContextSummary, type WorkContextDependencies } from "./work-context-collector.js";
 
 export class DesktopConnectorManager extends EventEmitter {
@@ -32,6 +39,7 @@ export class DesktopConnectorManager extends EventEmitter {
   private lastWorkContextReportTime: number = 0;
   private isCollectingWorkContext: boolean = false;
   private workContextDeps: WorkContextDependencies | null = null;
+  private registrationWatcher: FSWatcher | null = null;
 
   constructor(config: DesktopConnectorConfig) {
     super();
@@ -52,6 +60,8 @@ export class DesktopConnectorManager extends EventEmitter {
       console.log(`Device: ${savedRegistration.deviceName}\n`);
 
       this.emit("registered", this.registration);
+    } else {
+      this.startRegistrationWatcher();
     }
   }
 
@@ -68,6 +78,54 @@ export class DesktopConnectorManager extends EventEmitter {
       this.startCommandPolling();
       console.log("[PINAI Connector] Services started with saved registration");
     }
+  }
+
+  private startRegistrationWatcher(): void {
+    if (this.registrationWatcher || this.registration) {
+      return;
+    }
+
+    const registrationDir = dirname(REGISTRATION_FILE);
+    if (!existsSync(registrationDir)) {
+      mkdirSync(registrationDir, { recursive: true });
+    }
+
+    this.registrationWatcher = watch(registrationDir, { persistent: false }, (_event, filename) => {
+      if (filename && filename !== basename(REGISTRATION_FILE)) {
+        return;
+      }
+
+      const savedRegistration = loadRegistration();
+      if (!savedRegistration) {
+        return;
+      }
+
+      if (this.registration && this.registration.connectorId === savedRegistration.connectorId) {
+        return;
+      }
+
+      this.registration = savedRegistration;
+      this.status = "connected";
+      this.lastWorkContextReportTime = savedRegistration.lastWorkContextReportTime || 0;
+
+      if (this.workContextDeps) {
+        this.startHeartbeat();
+        this.startCommandPolling();
+        console.log("[PINAI Connector] Services started after registration update");
+      }
+
+      this.emit("registered", this.registration);
+      this.stopRegistrationWatcher();
+    });
+  }
+
+  private stopRegistrationWatcher(): void {
+    if (!this.registrationWatcher) {
+      return;
+    }
+
+    this.registrationWatcher.close();
+    this.registrationWatcher = null;
   }
 
   /**
@@ -713,7 +771,11 @@ export class DesktopConnectorManager extends EventEmitter {
   /**
    * Disconnect and cleanup
    */
-  async disconnect(options: { clearRegistration?: boolean } = {}): Promise<void> {
+  async disconnect(
+    options: { clearRegistration?: boolean; watchForRegistration?: boolean } = {},
+  ): Promise<void> {
+    this.stopRegistrationWatcher();
+
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -759,5 +821,14 @@ export class DesktopConnectorManager extends EventEmitter {
     this.registration = null;
     this.status = "disconnected";
     this.emit("disconnected");
+
+    const shouldWatch =
+      typeof options.watchForRegistration === "boolean"
+        ? options.watchForRegistration
+        : options.clearRegistration !== false;
+
+    if (shouldWatch) {
+      this.startRegistrationWatcher();
+    }
   }
 }
