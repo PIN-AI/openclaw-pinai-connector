@@ -1,14 +1,12 @@
 /**
  * Work Context Collector
- * Collects local work context snapshot and optionally asks AI to summarize
+ * Collects local work context snapshot (no local AI summary)
  */
-
-import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadCoreAgentDeps, resolveProviderModel } from "./core-bridge.js";
+import { loadCoreAgentDeps } from "./core-bridge.js";
 
 export type WorkContextSummary = {
   period: {
@@ -26,9 +24,9 @@ export type WorkContextSummary = {
     commandsRun: string[];
     keyTopics: string[];
   };
-  summary: string;
-  summaryStatus?: "ok" | "no_data" | "error";
-  summaryError?: string;
+  context: string;
+  contextStatus?: "ok" | "error";
+  contextError?: string;
 };
 
 export type WorkContextDependencies = {
@@ -708,7 +706,7 @@ async function collectLocalContext(
 }
 
 /**
- * Collect work context from local snapshot with optional AI summary
+ * Collect work context from local snapshot
  */
 export async function collectWorkContext(
   hoursBack: number = 0,
@@ -717,132 +715,33 @@ export async function collectWorkContext(
 ): Promise<WorkContextSummary> {
   const endTime = Date.now();
   const fullScan = hoursBack <= 0;
+  const workspaceDir = deps?.workspaceDir?.trim() || process.cwd();
+  let agentId = "main";
+  let coreDepsError: string | undefined;
 
-  if (!deps) {
-    console.log("[Work Context] Dependencies not provided, returning placeholder");
-    return {
-      period: {
-        startTime: endTime - Math.max(0, hoursBack) * 60 * 60 * 1000,
-        endTime,
-        durationHours: Math.max(0, hoursBack),
-      },
-      sessions: { total: 0, recentFiles: [] },
-      activity: { tasksCompleted: [], filesModified: [], commandsRun: [], keyTopics: [] },
-      summary: "Work context collection unavailable (dependencies not provided)",
-      summaryStatus: "error",
-      summaryError: "missing_dependencies",
-    };
+  try {
+    const coreDeps = await loadCoreAgentDeps();
+    if (coreDeps.DEFAULT_AGENT_ID) {
+      agentId = coreDeps.DEFAULT_AGENT_ID;
+    }
+  } catch (error) {
+    coreDepsError = error instanceof Error ? error.message : String(error);
   }
 
   console.log("\n[Work Context] Collecting local context...");
 
   try {
-    const { config } = deps;
-    const workspaceDir = deps.workspaceDir?.trim() || process.cwd();
-    let coreDeps: Awaited<ReturnType<typeof loadCoreAgentDeps>> | null = null;
-    let coreDepsError: string | undefined;
-    let agentId = "main";
-
-    try {
-      coreDeps = await loadCoreAgentDeps();
-      if (coreDeps.DEFAULT_AGENT_ID) {
-        agentId = coreDeps.DEFAULT_AGENT_ID;
-      }
-    } catch (error) {
-      coreDepsError = error instanceof Error ? error.message : String(error);
-    }
-
     const localContext = await collectLocalContext(workspaceDir, agentId, lastReportTimeMs);
     const rawContext = summarizeLocalContext(localContext);
     const trimmedContext = truncateText(rawContext, MAX_CONTEXT_CHARS);
+    const combinedContext = `## Work Context Snapshot\n${trimmedContext}`;
+    const finalContext = truncateText(combinedContext, MAX_CONTEXT_CHARS);
 
-    let summaryStatus: WorkContextSummary["summaryStatus"] = "ok";
-    let summaryError: string | undefined;
-    let aiSummary: string | null = null;
-
-    if (coreDeps) {
-      const sessionId = `work-context-${Date.now()}`;
-      const resolvedWorkspaceDir =
-        deps.workspaceDir?.trim() || coreDeps.resolveAgentWorkspaceDir(config, agentId);
-      const sessionFile = coreDeps.resolveSessionTranscriptPath(sessionId, agentId);
-      const agentDir = coreDeps.resolveAgentDir(config, agentId);
-
-      try {
-        await coreDeps.ensureAgentWorkspace({ dir: resolvedWorkspaceDir });
-
-        const { provider, model } = resolveProviderModel(config, {
-          provider: coreDeps.DEFAULT_PROVIDER,
-          model: coreDeps.DEFAULT_MODEL,
-        });
-
-        const promptTime = fullScan ? "all available history" : `the past ${hoursBack} hours`;
-        const prompt = [
-          `Summarize the user's recent work context and interests based on the local snapshot below (${promptTime}).`,
-          "Focus on: what the user is trying to achieve, what they asked recently, what they care about, and what the assistant did.",
-          "Use the conversation excerpts to infer intent and interests; use git commits to infer ongoing development work.",
-          "Output markdown with these sections:",
-          "1) Recent focus (3-6 bullets)",
-          "2) Interests & recurring topics (3-8 bullets)",
-          "3) Active tasks / pending requests (bullets)",
-          "4) Actions already taken by assistant (bullets)",
-          "5) Git changes summary (if any, 3-6 bullets)",
-          "Keep it concise and avoid listing raw files unless necessary.",
-          "",
-          "Local snapshot:",
-          trimmedContext,
-        ].join("\n");
-
-        const result = await coreDeps.runEmbeddedPiAgent({
-          sessionId,
-          sessionFile,
-          workspaceDir: resolvedWorkspaceDir,
-          agentDir,
-          config,
-          prompt,
-          provider,
-          model,
-          thinkLevel: "low",
-          timeoutMs: 300000, // 5 minutes timeout
-          runId: crypto.randomUUID(),
-        });
-
-        const payloads = result.payloads ?? [];
-        const hasErrorPayload = payloads.some((p) => p.isError);
-        const summary = payloads
-          .map((p) => p.text || "")
-          .filter((t) => t.length > 0)
-          .join("\n")
-          .trim();
-        if (result.meta?.aborted) {
-          summaryStatus = "error";
-          summaryError = "aborted";
-        } else if (hasErrorPayload) {
-          summaryStatus = "error";
-          summaryError = "payload_error";
-        } else if (!summary || summary.length < 5) {
-          summaryStatus = "error";
-          summaryError = "empty_summary";
-        } else if (summary === "No work record") {
-          summaryStatus = "no_data";
-        } else {
-          aiSummary = summary;
-        }
-      } catch (error) {
-        summaryStatus = "error";
-        summaryError = error instanceof Error ? error.message : String(error);
-      }
-    } else {
-      summaryStatus = "error";
-      summaryError = coreDepsError || "core_deps_unavailable";
+    if (coreDepsError) {
+      console.warn(`[Work Context] Core deps unavailable: ${coreDepsError}`);
     }
 
-    const summaryHeader = "## Work Context Summary";
-    const combinedSummary = aiSummary
-      ? `${summaryHeader}\n${aiSummary}`
-      : `## Raw Context (local snapshot)\n${trimmedContext}`;
-    const finalSummary = truncateText(combinedSummary, MAX_CONTEXT_CHARS);
-
-    console.log(`[Work Context] Summary generated (${finalSummary.length} chars)`);
+    console.log(`[Work Context] Snapshot generated (${finalContext.length} chars)`);
 
     return {
       period: {
@@ -873,19 +772,18 @@ export async function collectWorkContext(
         commandsRun: [],
         keyTopics: [],
       },
-      summary: finalSummary,
-      summaryStatus,
-      summaryError,
+      context: finalContext,
+      contextStatus: "ok",
     };
   } catch (error) {
-    console.error(`[Work Context] Failed to generate AI summary: ${error}`);
+    console.error(`[Work Context] Failed to generate snapshot: ${error}`);
     return {
       period: { startTime, endTime, durationHours: hoursBack },
       sessions: { total: 0, recentFiles: [] },
       activity: { tasksCompleted: [], filesModified: [], commandsRun: [], keyTopics: [] },
-      summary: `Unable to generate work summary: ${error instanceof Error ? error.message : String(error)}`,
-      summaryStatus: "error",
-      summaryError: error instanceof Error ? error.message : String(error),
+      context: `Unable to generate work snapshot: ${error instanceof Error ? error.message : String(error)}`,
+      contextStatus: "error",
+      contextError: error instanceof Error ? error.message : String(error),
     };
   }
 }

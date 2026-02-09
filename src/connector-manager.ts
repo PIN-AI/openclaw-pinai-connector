@@ -66,7 +66,7 @@ export class DesktopConnectorManager extends EventEmitter {
   }
 
   /**
-   * Set work context dependencies for AI-based work summary
+   * Set work context dependencies for local snapshot collection
    * If registration exists, start heartbeat and polling
    */
   setWorkContextDependencies(deps: WorkContextDependencies): void {
@@ -471,13 +471,6 @@ export class DesktopConnectorManager extends EventEmitter {
       timestamp: Date.now(),
       workStatus: {
         lastActivity: Date.now(),
-        workContext: this.lastWorkContext
-          ? {
-              summary: this.lastWorkContext.summary,
-              sessionCount: this.lastWorkContext.sessions.total,
-              periodHours: this.lastWorkContext.period.durationHours,
-            }
-          : undefined,
       },
     };
 
@@ -489,13 +482,6 @@ export class DesktopConnectorManager extends EventEmitter {
       work_status: payload.workStatus
         ? {
             last_activity: payload.workStatus.lastActivity,
-            work_context: payload.workStatus.workContext
-              ? {
-                  summary: payload.workStatus.workContext.summary,
-                  session_count: payload.workStatus.workContext.sessionCount,
-                  period_hours: payload.workStatus.workContext.periodHours,
-                }
-              : undefined,
           }
         : undefined,
     };
@@ -701,14 +687,14 @@ export class DesktopConnectorManager extends EventEmitter {
       );
       this.lastWorkContext = workContext;
 
-      console.log(`[Work Context] Collected: ${workContext.summary.substring(0, 100)}...`);
+      console.log(`[Work Context] Collected: ${workContext.context.substring(0, 100)}...`);
 
-      if (!workContext.summary || workContext.summary.trim().length < 5) {
-        console.log("[Work Context] Empty summary, skipping backend report");
+      if (!workContext.context || workContext.context.trim().length < 5) {
+        console.log("[Work Context] Empty context, skipping backend report");
         return;
       }
 
-      // Report to backend (simplified format - only summary)
+      // Report to backend (raw context, backend handles AI summary)
       await fetch(`${this.config.backendUrl}/connector/pinai/work-context`, {
         method: "POST",
         headers: {
@@ -716,7 +702,7 @@ export class DesktopConnectorManager extends EventEmitter {
         },
         body: JSON.stringify({
           connector_id: this.registration.connectorId,
-          summary: workContext.summary,
+          context: workContext.context,
           reported_at: Date.now(),
         }),
       });

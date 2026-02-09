@@ -97,7 +97,7 @@ const pinaiConnectorPlugin = {
           // Initialize connector manager
           connectorManager = new DesktopConnectorManager(config);
 
-          // Set up work context dependencies for AI-based work summary
+          // Set up work context dependencies for local snapshot collection
           connectorManager.setWorkContextDependencies({
             config: api.config,
             workspaceDir: ctx.workspaceDir || process.cwd(),
@@ -514,13 +514,13 @@ const pinaiConnectorPlugin = {
                   savedRegistration.lastWorkContextReportTime || undefined,
                 );
 
-                if (!workContext.summary || workContext.summary.trim().length < 5) {
-                  console.log("\n⚠️  Work context summary is empty, aborting.\n");
+                if (!workContext.context || workContext.context.trim().length < 5) {
+                  console.log("\n⚠️  Work context snapshot is empty, aborting.\n");
                   return;
                 }
 
                 console.log("\n=== Work Context (preview) ===\n");
-                console.log(workContext.summary);
+                console.log(workContext.context);
                 console.log("\n=== End Work Context ===\n");
 
                 const res = await fetch(`${config.backendUrl}/connector/pinai/work-context`, {
@@ -531,7 +531,7 @@ const pinaiConnectorPlugin = {
                   },
                   body: JSON.stringify({
                     connector_id: savedRegistration.connectorId,
-                    summary: workContext.summary,
+                    context: workContext.context,
                     reported_at: Date.now(),
                   }),
                 });

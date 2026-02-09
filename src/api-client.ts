@@ -293,12 +293,12 @@ export class ApiClient {
    */
   async reportWorkContext(
     connectorId: string,
-    summary: string,
+    context: string,
     reportedAt: number,
   ): Promise<ApiResponse<void>> {
     return this.post(API_ENDPOINTS.WORK_CONTEXT, {
       connector_id: connectorId,
-      summary,
+      context,
       reported_at: reportedAt,
     });
   }

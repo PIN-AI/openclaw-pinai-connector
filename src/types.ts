@@ -151,7 +151,7 @@ export function isValidRegistration(data: unknown): data is ConnectorRegistratio
  * Work context info included in heartbeat
  */
 export interface WorkContextInfo {
-  /** Summary of recent work activity */
+  /** Short context preview (legacy, optional) */
   summary: string;
 
   /** Number of sessions in the period */
@@ -174,7 +174,7 @@ export interface WorkStatus {
   /** Last activity timestamp (optional) */
   lastActivity?: number;
 
-  /** Work context summary (optional) */
+  /** Work context preview (optional) */
   workContext?: WorkContextInfo;
 }
 
