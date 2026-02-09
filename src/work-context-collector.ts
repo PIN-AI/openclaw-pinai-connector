@@ -67,6 +67,17 @@ type LocalContext = {
     oldestMtimeMs?: number;
     newestMtimeMs?: number;
   };
+  conversations: {
+    totalMessages: number;
+    totalUserMessages: number;
+    excerpts: Array<{
+      role: string;
+      text: string;
+      timestamp?: number;
+      sessionFile?: string;
+    }>;
+    truncated: boolean;
+  };
   git?: {
     root?: string;
     head?: string;
@@ -83,8 +94,11 @@ const MAX_SCAN_FILES = 20000;
 const MAX_RECENT_FILES = 200;
 const MAX_LARGEST_FILES = 50;
 const MAX_SESSION_FILES = 50;
-const MAX_CONTEXT_CHARS = 8000;
+const MAX_CONTEXT_CHARS = 12000;
 const MAX_GIT_FILES = 200;
+const MAX_MESSAGE_CHARS = 400;
+const MAX_MESSAGE_ITEMS = 120;
+const MAX_CONVERSATION_FILES = 20;
 
 const DEFAULT_SKIP_DIRS = new Set([
   ".git",
@@ -155,6 +169,154 @@ function normalizeGitPath(input: string): string {
     return parts[parts.length - 1] || trimmed;
   }
   return trimmed;
+}
+
+function extractMessageText(message: Record<string, unknown>): string | null {
+  const content = message.content;
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return "";
+        }
+        const record = item as Record<string, unknown>;
+        if (typeof record.text === "string") {
+          return record.text;
+        }
+        if (typeof record.content === "string") {
+          return record.content;
+        }
+        return "";
+      })
+      .filter((text) => text.trim().length > 0);
+    const joined = parts.join("\n").trim();
+    return joined.length > 0 ? joined : null;
+  }
+  if (typeof content === "string") {
+    const trimmed = content.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (content && typeof content === "object") {
+    const record = content as Record<string, unknown>;
+    if (typeof record.text === "string" && record.text.trim()) {
+      return record.text.trim();
+    }
+  }
+  if (typeof message.text === "string" && message.text.trim()) {
+    return message.text.trim();
+  }
+  return null;
+}
+
+async function collectConversationExcerpts(agentId: string): Promise<LocalContext["conversations"]> {
+  const stateDir = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(os.homedir(), ".openclaw");
+  const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
+  const result: LocalContext["conversations"] = {
+    totalMessages: 0,
+    totalUserMessages: 0,
+    excerpts: [],
+    truncated: false,
+  };
+
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(sessionsDir, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+
+  const sessionFiles = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((name) => name.endsWith(".jsonl"))
+    .filter((name) => name !== "sessions.json")
+    .filter((name) => !name.startsWith("work-context-"));
+
+  const fileStats = await Promise.all(
+    sessionFiles.map(async (name) => {
+      const fullPath = path.join(sessionsDir, name);
+      try {
+        const stat = await fs.stat(fullPath);
+        return { name, fullPath, mtimeMs: stat.mtimeMs, size: stat.size };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const sortedFiles = fileStats
+    .filter((item): item is { name: string; fullPath: string; mtimeMs: number; size: number } =>
+      Boolean(item),
+    )
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, MAX_CONVERSATION_FILES);
+
+  for (const file of sortedFiles) {
+    if (result.excerpts.length >= MAX_MESSAGE_ITEMS) {
+      result.truncated = true;
+      break;
+    }
+
+    let raw = "";
+    try {
+      raw = await fs.readFile(file.fullPath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const lines = raw.split("\n").filter(Boolean);
+    for (const line of lines) {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      const message = parsed.message as Record<string, unknown> | undefined;
+      if (!message || typeof message !== "object") {
+        continue;
+      }
+
+      const role = typeof message.role === "string" ? message.role : "unknown";
+      const text = extractMessageText(message);
+      if (!text) {
+        continue;
+      }
+
+      result.totalMessages += 1;
+      if (role === "user") {
+        result.totalUserMessages += 1;
+      }
+
+      if (role !== "user") {
+        continue;
+      }
+
+      const truncatedText = truncateText(text, MAX_MESSAGE_CHARS);
+      const timestamp =
+        typeof message.timestamp === "number"
+          ? message.timestamp
+          : typeof parsed.timestamp === "number"
+            ? parsed.timestamp
+            : undefined;
+
+      result.excerpts.push({
+        role,
+        text: truncatedText,
+        timestamp,
+        sessionFile: file.name,
+      });
+
+      if (result.excerpts.length >= MAX_MESSAGE_ITEMS) {
+        result.truncated = true;
+        break;
+      }
+    }
+  }
+
+  result.excerpts.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+  return result;
 }
 
 async function collectGitChanges(
@@ -401,6 +563,16 @@ function summarizeLocalContext(context: LocalContext): string {
     lines.push(`- ${root}`);
   }
 
+  lines.push("");
+  lines.push("Recent user messages:");
+  lines.push(`- Total user messages: ${context.conversations.totalUserMessages}`);
+  lines.push(`- Total messages: ${context.conversations.totalMessages}`);
+  lines.push(`- Truncated: ${context.conversations.truncated ? "yes" : "no"}`);
+  for (const entry of context.conversations.excerpts.slice(0, 50)) {
+    const timestamp = entry.timestamp ? formatTime(entry.timestamp) : "unknown time";
+    lines.push(`- [${timestamp}] ${entry.text}`);
+  }
+
   const stats = context.fileStats;
   lines.push("");
   lines.push("File scan summary:");
@@ -480,6 +652,7 @@ async function collectLocalContext(
   const roots = [workspaceDir];
   const fileStats = await walkFiles(workspaceDir);
   const sessions = await collectSessionStats(agentId);
+  const conversations = await collectConversationExcerpts(agentId);
   const gitHead = await detectGitHead(workspaceDir);
   const gitChanges = await collectGitChanges(workspaceDir, lastReportTimeMs);
   const git = {
@@ -492,6 +665,7 @@ async function collectLocalContext(
     roots,
     fileStats,
     sessions,
+    conversations,
     git,
   };
 }
@@ -654,7 +828,7 @@ export async function collectWorkContext(
         tasksCompleted: [],
         filesModified: localContext.fileStats.recentFiles.map((f) => f.path),
         commandsRun: [],
-        keyTopics: Object.keys(localContext.fileStats.extensionCounts).slice(0, 10),
+        keyTopics: [],
       },
       summary: finalSummary,
       summaryStatus,
