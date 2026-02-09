@@ -452,13 +452,13 @@ export class DesktopConnectorManager extends EventEmitter {
       return;
     }
 
-    // Check if we need to collect and report work context (every 6 hours)
-    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    // Check if we need to collect and report work context (daily)
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
     const timeSinceLastReport = now - this.lastWorkContextReportTime;
 
     // Only trigger if: enough time passed AND not already collecting
-    if (timeSinceLastReport >= SIX_HOURS_MS && !this.isCollectingWorkContext) {
+    if (timeSinceLastReport >= ONE_DAY_MS && !this.isCollectingWorkContext) {
       // Collect work context in the background (don't block heartbeat)
       this.collectAndReportWorkContext().catch((error) => {
         console.error(`[Work Context] Failed to collect: ${error}`);
@@ -693,14 +693,18 @@ export class DesktopConnectorManager extends EventEmitter {
     try {
       console.log("\n[Work Context] Starting collection...");
 
-      // Collect work context from the last 6 hours
-      const workContext = await collectWorkContext(6, this.workContextDeps || undefined);
+      // Collect full work context snapshot
+      const workContext = await collectWorkContext(
+        0,
+        this.workContextDeps || undefined,
+        this.lastWorkContextReportTime || undefined,
+      );
       this.lastWorkContext = workContext;
 
       console.log(`[Work Context] Collected: ${workContext.summary.substring(0, 100)}...`);
 
-      if (workContext.summaryStatus === "error") {
-        console.log("[Work Context] AI summary generation failed or no data, skipping backend report");
+      if (!workContext.summary || workContext.summary.trim().length < 5) {
+        console.log("[Work Context] Empty summary, skipping backend report");
         return;
       }
 

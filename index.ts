@@ -9,6 +9,7 @@ import qrcode from "qrcode-terminal";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { DesktopConnectorManager } from "./src/connector-manager.js";
 import { loadCoreAgentDeps, resolveProviderModel } from "./src/core-bridge.js";
+import { collectWorkContext } from "./src/work-context-collector.js";
 import type { DesktopConnectorConfig } from "./src/types.js";
 
 const pinaiConnectorPlugin = {
@@ -476,6 +477,70 @@ const pinaiConnectorPlugin = {
 
                 console.log("\n✅ PINAI Connector disconnected and removed");
                 console.log("   If the gateway is running, restart it to stop the connector.\n");
+              } catch (error) {
+                console.error(`\n❌ Error: ${String(error)}\n`);
+                process.exit(1);
+              }
+            }),
+        )
+        .addCommand(
+          ctx.program
+            .createCommand("work-context")
+            .description("Collect and report work context immediately")
+            .option("--hours <hours>", "Limit to last N hours (0 = full)", "0")
+            .action(async (options: { hours?: string }) => {
+              try {
+                const { loadRegistration, saveRegistration } = await import(
+                  "./src/registration-store.js"
+                );
+                const savedRegistration = loadRegistration();
+
+                if (!savedRegistration) {
+                  console.log("\n⚠️  PINAI Connector: Not connected");
+                  console.log("   Run 'openclaw pinai connect' to connect.\n");
+                  return;
+                }
+
+                const hours = options?.hours ? Number.parseFloat(options.hours) : 0;
+                const hoursBack = Number.isFinite(hours) ? hours : 0;
+
+                console.log("\n[Work Context] Collecting snapshot...");
+                const workContext = await collectWorkContext(
+                  hoursBack,
+                  {
+                    config: ctx.config,
+                    workspaceDir: ctx.workspaceDir || process.cwd(),
+                  },
+                  savedRegistration.lastWorkContextReportTime || undefined,
+                );
+
+                if (!workContext.summary || workContext.summary.trim().length < 5) {
+                  console.log("\n⚠️  Work context summary is empty, aborting.\n");
+                  return;
+                }
+
+                const res = await fetch(`${config.backendUrl}/connector/pinai/work-context`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${savedRegistration.token}`,
+                  },
+                  body: JSON.stringify({
+                    connector_id: savedRegistration.connectorId,
+                    summary: workContext.summary,
+                    reported_at: Date.now(),
+                  }),
+                });
+
+                if (!res.ok) {
+                  const text = await res.text();
+                  throw new Error(`Failed to report work context: ${res.status} ${text}`);
+                }
+
+                savedRegistration.lastWorkContextReportTime = Date.now();
+                saveRegistration(savedRegistration);
+
+                console.log("\n✅ Work context reported successfully\n");
               } catch (error) {
                 console.error(`\n❌ Error: ${String(error)}\n`);
                 process.exit(1);
