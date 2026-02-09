@@ -266,7 +266,11 @@ const pinaiConnectorPlugin = {
 
       async stop(ctx) {
         if (connectorManager) {
-          await connectorManager.disconnect({ clearRegistration: false, watchForRegistration: false });
+          await connectorManager.disconnect({
+            clearRegistration: false,
+            watchForRegistration: false,
+            notifyRemote: false,
+          });
           connectorManager = null;
           ctx.logger.info("[PINAI Connector] Service stopped");
         }

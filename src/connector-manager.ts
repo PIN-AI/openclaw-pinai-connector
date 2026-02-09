@@ -766,6 +766,7 @@ export class DesktopConnectorManager extends EventEmitter {
       clearRegistration?: boolean;
       watchForRegistration?: boolean;
       deleteRemote?: boolean;
+      notifyRemote?: boolean;
     } = {},
   ): Promise<void> {
     this.stopRegistrationWatcher();
@@ -792,31 +793,34 @@ export class DesktopConnectorManager extends EventEmitter {
 
     let remoteOk = false;
     if (this.registration) {
-      // Notify backend of disconnection
-      try {
-        const response = await fetch(`${this.config.backendUrl}/connector/pinai/disconnect`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${this.registration.token}`,
-          },
-          body: JSON.stringify({
-            connector_id: this.registration.connectorId,
-            delete: options.deleteRemote === true,
-          }),
-        });
-        remoteOk = response.ok;
-        if (!response.ok) {
-          console.error(
-            `[PINAI Connector] Failed to disconnect: ${response.status} ${response.statusText}`,
-          );
+      const shouldNotify = options.notifyRemote !== false;
+      // Notify backend of disconnection unless explicitly disabled
+      if (shouldNotify) {
+        try {
+          const response = await fetch(`${this.config.backendUrl}/connector/pinai/disconnect`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${this.registration.token}`,
+            },
+            body: JSON.stringify({
+              connector_id: this.registration.connectorId,
+              delete: options.deleteRemote === true,
+            }),
+          });
+          remoteOk = response.ok;
+          if (!response.ok) {
+            console.error(
+              `[PINAI Connector] Failed to disconnect: ${response.status} ${response.statusText}`,
+            );
+          }
+        } catch {
+          // Ignore errors during disconnect
         }
-      } catch {
-        // Ignore errors during disconnect
       }
 
       const shouldClear = options.clearRegistration !== false;
-      const needsRemoteSuccess = options.deleteRemote === true;
+      const needsRemoteSuccess = options.deleteRemote === true && options.notifyRemote !== false;
       if (shouldClear && (!needsRemoteSuccess || remoteOk)) {
         clearRegistration();
       }
