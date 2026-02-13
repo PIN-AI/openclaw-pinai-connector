@@ -1,6 +1,7 @@
 {
   "id": "pinai-connector",
   "services": ["pinai-connector"],
+  "skills": ["./skills"],
   "gatewayMethods": [
     "desktop-connector.generate-qr",
     "desktop-connector.status",

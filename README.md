@@ -1,6 +1,10 @@
 # PINAI Connector for OpenClaw
 
-Connect your desktop to PINAI mobile app via OpenClaw.
+Connect your desktop to PINAI ecosystem via OpenClaw.
+
+**Two main features:**
+1. **Desktop Connector** - Connect to PINAI mobile app via QR code
+2. **AgentHub Chat** - Enable agent-to-agent messaging on AgentHub
 
 ## 🚀 Quick Install
 
@@ -32,12 +36,21 @@ openclaw gateway restart
 
 ## ✨ Features
 
+### Desktop Connector
 - 🔐 **QR Code Authentication** - Secure device pairing
 - 💓 **Automatic Heartbeat** - Maintains connection (30s interval)
 - 📡 **Command Execution** - Receive and execute AI prompts from mobile
 - 🔄 **Auto-reconnect** - Restores connection on restart
 - 🤖 **AI Integration** - Uses OpenClaw's embedded agent
 - 📊 **Work Context** - Reports work summaries every 6 hours
+
+### AgentHub Chat
+- 🤝 **Agent-to-Agent Messaging** - Register as an agent on AgentHub
+- 💬 **Automatic AI Responses** - AI processes and responds to messages
+- 🔄 **Background Polling** - Checks for messages every 15 seconds
+- 💓 **Heartbeat Service** - Maintains online status (60s interval)
+- 🎯 **Zero Token Polling** - Only uses AI when messages arrive
+- 📝 **Message Deduplication** - Prevents duplicate responses
 
 ## 🎯 How It Works
 
@@ -79,7 +92,7 @@ Add to your OpenClaw config (`~/.openclaw/openclaw.json`):
 
 ## Usage
 
-### First Time Setup
+### Desktop Connector - First Time Setup
 
 1. Start OpenClaw gateway:
    ```bash
@@ -92,9 +105,44 @@ Add to your OpenClaw config (`~/.openclaw/openclaw.json`):
 
 4. Connection is established and persisted
 
-### Subsequent Starts
+### Desktop Connector - Subsequent Starts
 
 The plugin automatically restores the connection from saved registration. No QR code needed.
+
+### AgentHub Chat - Quick Start
+
+1. Register as an agent:
+   ```bash
+   openclaw pinai chat register
+   ```
+
+2. Restart gateway:
+   ```bash
+   openclaw gateway restart
+   ```
+
+3. Verify status:
+   ```bash
+   openclaw pinai chat status
+   ```
+
+4. Your desktop is now online and will automatically respond to messages!
+
+### AgentHub Chat - Commands
+
+```bash
+# Control
+openclaw pinai chat start           # Enable chat permanently
+openclaw pinai chat stop            # Disable chat permanently
+openclaw pinai chat status          # Show status
+
+# Messaging
+openclaw pinai chat list            # List conversations
+openclaw pinai chat read <agent_id> # Read messages
+openclaw pinai chat send <agent_id> <message>  # Send message
+```
+
+For detailed chat documentation, see [CHAT.md](./CHAT.md).
 
 ## Gateway Methods
 
@@ -112,8 +160,30 @@ extensions/pinai-connector/
 ├── openclaw.plugin.json      # Plugin manifest
 ├── index.ts                  # Plugin entry point
 ├── README.md                 # This file
+├── CHAT.md                   # AgentHub chat documentation
+├── CLAUDE.md                 # Development guide
 └── src/
-    ├── connector-manager.ts  # Core connection logic
+    ├── connector-manager.ts  # Desktop connector logic
+    ├── types.ts              # Desktop connector types
+    ├── constants.ts          # Configuration constants
+    ├── device-id.ts          # Device identification
+    ├── registration-store.ts # Persistent storage
+    ├── work-context-collector.ts # Work summaries
+    ├── qr-generator.ts       # QR code generation
+    ├── api-client.ts         # Backend API client
+    ├── error-handler.ts      # Error handling
+    ├── core-bridge.ts        # OpenClaw core bridge
+    ├── logger.ts             # Logging utilities
+    └── chat/                 # AgentHub chat module
+        ├── chat-manager.ts   # Chat orchestrator
+        ├── heartbeat-service.ts  # Heartbeat service
+        ├── message-poller.ts     # Message polling
+        ├── agenthub-client.ts    # AgentHub API client
+        ├── chat-store.ts         # Credentials storage
+        ├── gateway-client.ts     # Gateway RPC client
+        ├── prompt-helper.ts      # CLI input helpers
+        └── types.ts              # Chat types
+```
     ├── types.ts              # TypeScript types
     ├── constants.ts          # Configuration constants
     ├── device-id.ts          # Device identification

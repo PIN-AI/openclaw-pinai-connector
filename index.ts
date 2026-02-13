@@ -11,6 +11,16 @@ import { DesktopConnectorManager } from "./src/connector-manager.js";
 import { loadCoreAgentDeps, resolveProviderModel } from "./src/core-bridge.js";
 import { collectWorkContext } from "./src/work-context-collector.js";
 import type { DesktopConnectorConfig } from "./src/types.js";
+import { AgentHubChatManager } from "./src/chat/chat-manager.js";
+import { AgentHubClient } from "./src/chat/agenthub-client.js";
+import {
+  loadAgentHubCredentials,
+  saveAgentHubCredentials,
+  updateChatEnabled,
+} from "./src/chat/chat-store.js";
+import { callGatewayMethod } from "./src/chat/gateway-client.js";
+import { promptInput } from "./src/chat/prompt-helper.js";
+import type { AgentHubCredentials, RegistrationPayload } from "./src/chat/types.js";
 
 const pinaiConnectorPlugin = {
   id: "pinai-connector",
@@ -275,6 +285,189 @@ const pinaiConnectorPlugin = {
           ctx.logger.info("[PINAI Connector] Service stopped");
         }
       },
+    });
+
+    // Register AgentHub Chat Service
+    let chatManager: AgentHubChatManager | null = null;
+
+    api.registerService({
+      id: "pinai-chat",
+
+      async start(ctx) {
+        const credentials = loadAgentHubCredentials();
+
+        if (!credentials) {
+          ctx.logger.info("[PINAI Chat] Not registered. Run 'openclaw pinai chat register' to get started.");
+          return;
+        }
+
+        if (!credentials.enabled) {
+          ctx.logger.info("[PINAI Chat] Chat is disabled. Run 'openclaw pinai chat start' to enable.");
+          return;
+        }
+
+        ctx.logger.info(`[PINAI Chat] Starting for agent: ${credentials.agentName}`);
+
+        const chatConfig = {
+          apiKey: credentials.apiKey,
+          agentId: credentials.agentId,
+          agentName: credentials.agentName,
+          heartbeatIntervalMs: 60000,
+          messagePollingIntervalMs: 15000,
+          autoReply: true,
+        };
+
+        chatManager = new AgentHubChatManager(chatConfig);
+
+        // Listen for new messages
+        chatManager.on("message-received", async (message: any) => {
+          if (verbose) {
+            console.log(`\n${"=".repeat(80)}`);
+            console.log(`[PINAI Chat] New message from ${message.peerName}`);
+            console.log(`Message: ${message.content}`);
+            console.log(`${"=".repeat(80)}\n`);
+          }
+
+          try {
+            const coreDeps = await loadCoreAgentDeps();
+            const agentId = coreDeps.DEFAULT_AGENT_ID;
+            const sessionId = `pinai-chat-${message.peerId}`;
+            const workspaceDir = ctx.workspaceDir || process.cwd();
+
+            const prompt = `You received a message from agent "${message.peerName}" (ID: ${message.peerId}):
+
+"${message.content}"
+
+Please provide an appropriate response. Keep it concise and helpful.`;
+
+            if (verbose) {
+              console.log(`[PINAI Chat] Processing message with AI...`);
+            }
+
+            const { provider, model } = resolveProviderModel(ctx.config, {
+              provider: coreDeps.DEFAULT_PROVIDER,
+              model: coreDeps.DEFAULT_MODEL,
+            });
+
+            const result = await coreDeps.runEmbeddedPiAgent({
+              sessionId,
+              sessionFile: coreDeps.resolveSessionTranscriptPath(sessionId, agentId),
+              workspaceDir,
+              agentDir: coreDeps.resolveAgentDir(ctx.config, agentId),
+              config: ctx.config,
+              prompt,
+              provider,
+              model,
+              thinkLevel: "low",
+              timeoutMs: 60000,
+              runId: crypto.randomUUID(),
+            });
+
+            // Extract response
+            let response = "";
+            if (result.payloads && result.payloads.length > 0) {
+              response = result.payloads
+                .map((p: any) => p.text || "")
+                .filter((t: string) => t.length > 0)
+                .join("\n")
+                .trim();
+            }
+
+            if (response) {
+              await chatManager!.sendMessage(message.peerId, response);
+              if (verbose) {
+                console.log(`[PINAI Chat] Sent reply to ${message.peerName}`);
+              }
+            }
+          } catch (error) {
+            console.error(`[PINAI Chat] Failed to process message: ${error}`);
+          }
+        });
+
+        // Start the chat manager
+        await chatManager.start();
+        ctx.logger.info("[PINAI Chat] Service started and online");
+      },
+
+      async stop(ctx) {
+        if (chatManager) {
+          await chatManager.stop();
+          chatManager = null;
+          ctx.logger.info("[PINAI Chat] Service stopped");
+        }
+      },
+    });
+
+    // Register gateway methods for chat control
+    api.registerGatewayMethod("pinai-chat.start", async ({ respond }) => {
+      if (!chatManager) {
+        respond(false, undefined, {
+          code: "NOT_INITIALIZED",
+          message: "Chat manager not initialized. Restart gateway or check registration.",
+        });
+        return;
+      }
+
+      try {
+        await chatManager.start();
+        respond(true, {
+          success: true,
+          message: "Chat service started",
+          status: chatManager.getStatus(),
+        });
+      } catch (error) {
+        respond(false, undefined, {
+          code: "START_ERROR",
+          message: String(error),
+        });
+      }
+    });
+
+    api.registerGatewayMethod("pinai-chat.stop", async ({ respond }) => {
+      if (!chatManager) {
+        respond(false, undefined, {
+          code: "NOT_INITIALIZED",
+          message: "Chat manager not initialized",
+        });
+        return;
+      }
+
+      try {
+        await chatManager.stop();
+        respond(true, {
+          success: true,
+          message: "Chat service stopped",
+          status: chatManager.getStatus(),
+        });
+      } catch (error) {
+        respond(false, undefined, {
+          code: "STOP_ERROR",
+          message: String(error),
+        });
+      }
+    });
+
+    api.registerGatewayMethod("pinai-chat.status", async ({ respond }) => {
+      if (!chatManager) {
+        respond(false, undefined, {
+          code: "NOT_INITIALIZED",
+          message: "Chat manager not initialized",
+        });
+        return;
+      }
+
+      try {
+        const status = chatManager.getStatus();
+        respond(true, {
+          success: true,
+          ...status,
+        });
+      } catch (error) {
+        respond(false, undefined, {
+          code: "STATUS_ERROR",
+          message: String(error),
+        });
+      }
     });
 
     // Register CLI commands
@@ -554,6 +747,490 @@ const pinaiConnectorPlugin = {
                 process.exit(1);
               }
             }),
+        )
+        .addCommand(
+          ctx.program
+            .createCommand("chat")
+            .description("AgentHub chat commands")
+
+            // register command
+            .addCommand(
+              ctx.program
+                .createCommand("register")
+                .description("Register as AgentHub agent")
+                .option("--name <name>", "Agent name")
+                .option("--role <role>", "Agent role: consumer, provider, or both", "consumer")
+                .action(async (options: { name?: string; role?: string }) => {
+                  try {
+                    console.log("\n🚀 AgentHub Agent Registration");
+                    console.log("=" .repeat(50));
+
+                    const existingCreds = loadAgentHubCredentials();
+                    if (existingCreds) {
+                      console.log("\n⚠️  Already registered!");
+                      console.log(`   Agent ID: ${existingCreds.agentId}`);
+                      console.log(`   Agent Name: ${existingCreds.agentName}`);
+                      console.log(`   Status: ${existingCreds.enabled ? "Enabled" : "Disabled"}`);
+                      console.log("\n   Your agent is already set up.\n");
+                      return;
+                    }
+
+                    console.log("\nThis will register your desktop as an agent on AgentHub.");
+                    console.log("You'll be able to receive and send messages to other agents.\n");
+
+                    // Step 1: Agent Name
+                    const hostname = os.hostname();
+                    const defaultName = `OpenClaw-Desktop-${hostname}`;
+                    console.log("📝 Step 1: Agent Name");
+                    console.log(`   This is how other agents will see you.`);
+                    const agentName = options.name || (await promptInput(`   Enter name (press Enter for "${defaultName}"): `)) || defaultName;
+                    console.log(`   ✓ Using: ${agentName}\n`);
+
+                    // Step 2: Description
+                    console.log("📝 Step 2: Description");
+                    console.log(`   A brief description of your agent.`);
+                    const defaultDesc = "Desktop AI agent powered by OpenClaw";
+                    const description = (await promptInput(`   Enter description (press Enter for default): `)) || defaultDesc;
+                    console.log(`   ✓ Using: ${description}\n`);
+
+                    // Step 3: Role
+                    console.log("📝 Step 3: Role");
+                    console.log(`   • consumer: Can chat with other agents (recommended)`);
+                    console.log(`   • provider: Provides services to other agents (requires endpoint)`);
+                    console.log(`   • both: Can chat and provide services\n`);
+                    const roleInput = options.role || (await promptInput(`   Enter role (consumer/provider/both, default: consumer): `)) || "consumer";
+                    const role = roleInput.toLowerCase();
+
+                    if (!["consumer", "provider", "both"].includes(role)) {
+                      console.log(`\n❌ Invalid role: ${role}`);
+                      console.log("   Must be: consumer, provider, or both\n");
+                      return;
+                    }
+                    console.log(`   ✓ Using: ${role}\n`);
+
+                    let endpoint = "";
+                    let tags: string[] = [];
+
+                    if (role === "provider" || role === "both") {
+                      console.log("📝 Step 4: Provider Configuration");
+                      console.log("   Provider/both roles require an HTTP endpoint.");
+                      console.log("   This is where other agents will send requests.\n");
+
+                      endpoint = await promptInput("   Endpoint URL (e.g., https://your-domain.com/api/skill): ");
+
+                      if (!endpoint) {
+                        console.log("\n❌ Endpoint is required for provider/both roles.");
+                        console.log("   Tip: Use role 'consumer' if you only want chat functionality.\n");
+                        return;
+                      }
+                      console.log(`   ✓ Endpoint: ${endpoint}\n`);
+
+                      // Fetch tags (optional, with error handling)
+                      console.log("📋 Fetching available tags...");
+                      try {
+                        const availableTags = await AgentHubClient.getTags();
+                        console.log(`   Available: ${availableTags.slice(0, 10).join(", ")}${availableTags.length > 10 ? "..." : ""}\n`);
+
+                        console.log("   Select up to 3 tags (comma-separated, or press Enter to skip):");
+                        const tagsInput = await promptInput("   Tags: ");
+                        if (tagsInput.trim()) {
+                          tags = tagsInput.split(",").map((t) => t.trim()).filter((t) => t.length > 0).slice(0, 3);
+                          console.log(`   ✓ Selected: ${tags.join(", ")}\n`);
+                        } else {
+                          console.log(`   ✓ No tags selected\n`);
+                        }
+                      } catch (error) {
+                        console.log(`   ⚠️  Could not fetch tags (network error)`);
+                        console.log(`   Continuing without tags...\n`);
+                      }
+                    }
+
+                    console.log("🔄 Registering with AgentHub...\n");
+
+                    const registrationPayload: RegistrationPayload = {
+                      name: agentName,
+                      description,
+                      role: role as "consumer" | "provider" | "both",
+                      entity_type: "agent",
+                    };
+
+                    if (role === "provider" || role === "both") {
+                      registrationPayload.endpoint = endpoint;
+                      if (tags.length > 0) {
+                        registrationPayload.tags = tags;
+                      }
+                      registrationPayload.skills = [];
+                    }
+
+                    const result = await AgentHubClient.register(registrationPayload);
+
+                    const credentials: AgentHubCredentials = {
+                      apiKey: result.api_key,
+                      agentId: result.agent_id,
+                      agentName,
+                      role: role as "consumer" | "provider" | "both",
+                      endpoint: endpoint || undefined,
+                      registeredAt: Date.now(),
+                      enabled: true,
+                    };
+
+                    saveAgentHubCredentials(credentials);
+
+                    console.log("=" .repeat(50));
+                    console.log("✅ Registration Successful!");
+                    console.log("=" .repeat(50));
+                    console.log("\n📋 Agent Details:");
+                    console.log(`   Agent ID: ${result.agent_id}`);
+                    console.log(`   Agent Name: ${agentName}`);
+                    console.log(`   Role: ${role}`);
+                    if (endpoint) {
+                      console.log(`   Endpoint: ${endpoint}`);
+                    }
+                    console.log(`\n💾 Credentials saved to:`);
+                    console.log(`   ~/.openclaw/pinai-agenthub-credentials.json`);
+                    console.log(`   ⚠️  Keep this file secure!\n`);
+
+                    console.log("💓 Sending initial heartbeat...");
+                    try {
+                      const client = new AgentHubClient(result.api_key);
+                      await client.sendHeartbeat(true);
+                      console.log("✅ Agent is now online!\n");
+                    } catch (error) {
+                      console.log("⚠️  Heartbeat failed (will retry automatically)\n");
+                    }
+
+                    console.log("🚀 Next Steps:");
+                    console.log("   1. Restart gateway: openclaw gateway restart");
+                    console.log("   2. Check status: openclaw pinai chat status");
+                    console.log("   3. Start chatting: openclaw pinai chat list\n");
+                    console.log("💡 The 'chat-agent' skill is now available:");
+                    console.log("   • AI can find agents with specific expertise");
+                    console.log("   • AI can chat with other agents for collaboration");
+                    console.log("   • Incoming messages are handled automatically\n");
+                  } catch (error) {
+                    console.log("\n" + "=".repeat(50));
+                    console.error("❌ Registration Failed");
+                    console.log("=".repeat(50));
+
+                    if (error instanceof Error) {
+                      if (error.message.includes("fetch failed") || error.message.includes("ENOTFOUND")) {
+                        console.log("\n⚠️  Network Error:");
+                        console.log("   Cannot connect to agents.pinai.tech");
+                        console.log("\n💡 Troubleshooting:");
+                        console.log("   • Check your internet connection");
+                        console.log("   • Verify you can access https://agents.pinai.tech");
+                        console.log("   • Check if a firewall is blocking the connection");
+                        console.log("   • Try again in a few moments\n");
+                      } else {
+                        console.log(`\n   Error: ${error.message}\n`);
+                      }
+                    } else {
+                      console.log(`\n   Error: ${String(error)}\n`);
+                    }
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // start command
+            .addCommand(
+              ctx.program
+                .createCommand("start")
+                .description("Enable chat permanently")
+                .action(async () => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered. Run 'openclaw pinai chat register' first.\n");
+                      return;
+                    }
+
+                    if (credentials.enabled) {
+                      console.log("\n⚠️  Chat is already enabled.\n");
+                      console.log("💡 If the service is not running, restart the gateway:");
+                      console.log("   openclaw gateway restart\n");
+                      return;
+                    }
+
+                    console.log("\n🚀 Enabling chat...\n");
+
+                    updateChatEnabled(true);
+
+                    console.log("✅ Chat enabled!");
+                    console.log(`   Agent: ${credentials.agentName}`);
+                    console.log("\n🔄 Restart gateway to start the service:");
+                    console.log("   openclaw gateway restart\n");
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // stop command
+            .addCommand(
+              ctx.program
+                .createCommand("stop")
+                .description("Disable chat permanently")
+                .action(async () => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered.\n");
+                      return;
+                    }
+
+                    if (!credentials.enabled) {
+                      console.log("\n⚠️  Chat is already disabled.\n");
+                      return;
+                    }
+
+                    console.log("\n🛑 Disabling chat...\n");
+
+                    updateChatEnabled(false);
+
+                    console.log("✅ Chat disabled!");
+                    console.log("   Agent will go offline on next gateway restart.\n");
+                    console.log("🔄 Restart gateway to apply:");
+                    console.log("   openclaw gateway restart\n");
+                    console.log("💡 To re-enable: openclaw pinai chat start\n");
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // status command
+            .addCommand(
+              ctx.program
+                .createCommand("status")
+                .description("Show chat status")
+                .action(async () => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered. Run 'openclaw pinai chat register' first.\n");
+                      return;
+                    }
+
+                    console.log("\n📊 AgentHub Chat Status\n");
+                    console.log(`   Agent ID: ${credentials.agentId}`);
+                    console.log(`   Agent Name: ${credentials.agentName}`);
+                    console.log(`   Role: ${credentials.role}`);
+                    console.log(`   Chat: ${credentials.enabled ? "🟢 Enabled" : "🔴 Disabled"}`);
+
+                    if (credentials.enabled) {
+                      // Check online status via AgentHub API
+                      try {
+                        const client = new AgentHubClient(credentials.apiKey);
+                        const response = await client.sendHeartbeat(true);
+
+                        console.log(`   Online Status: 🟢 Online`);
+                        if (response.unread_count !== undefined) {
+                          console.log(`   Unread Messages: ${response.unread_count}`);
+                        }
+                        if (credentials.lastHeartbeat) {
+                          console.log(`   Last Heartbeat: ${new Date(credentials.lastHeartbeat).toLocaleString()}`);
+                        }
+
+                        console.log("\n💡 Service is running in gateway.");
+                        console.log("   Check logs: tail -f /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log | grep Chat");
+                      } catch (error) {
+                        console.log(`   Online Status: ⚠️  Cannot connect to AgentHub`);
+                        console.log(`   Error: ${error instanceof Error ? error.message : String(error)}`);
+                      }
+                    } else {
+                      console.log("\n💡 Chat is disabled. Run 'openclaw pinai chat start' to enable.");
+                    }
+
+                    console.log();
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // list command
+            .addCommand(
+              ctx.program
+                .createCommand("list")
+                .description("List all conversations")
+                .action(async () => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered.\n");
+                      return;
+                    }
+
+                    const client = new AgentHubClient(credentials.apiKey);
+                    const conversations = await client.getConversations();
+
+                    console.log("\n💬 Conversations\n");
+                    if (conversations.length === 0) {
+                      console.log("   No conversations yet.\n");
+                      return;
+                    }
+
+                    for (const conv of conversations) {
+                      const unread = conv.unread_count > 0 ? `(${conv.unread_count} unread)` : "";
+                      console.log(`   ${conv.peer.name} [${conv.peer.id}] ${unread}`);
+                      if (conv.last_message) {
+                        const preview = conv.last_message.content.length > 60
+                          ? conv.last_message.content.substring(0, 60) + "..."
+                          : conv.last_message.content;
+                        console.log(`   └─ ${preview}`);
+                      }
+                      console.log();
+                    }
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // read command
+            .addCommand(
+              ctx.program
+                .createCommand("read")
+                .description("Read messages from a peer")
+                .argument("<agent_id>", "Agent ID to read messages from")
+                .option("-n, --limit <number>", "Number of messages to show", "20")
+                .action(async (agentId: string, options: { limit: string }) => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered.\n");
+                      return;
+                    }
+
+                    const client = new AgentHubClient(credentials.apiKey);
+                    const messages = await client.getMessages(agentId, parseInt(options.limit));
+
+                    console.log(`\n💬 Messages with ${agentId}\n`);
+
+                    if (messages.length === 0) {
+                      console.log("   No messages yet.\n");
+                      return;
+                    }
+
+                    for (const msg of messages) {
+                      const from = msg.from === credentials.agentId ? "You" : agentId;
+                      const time = new Date(msg.created_at).toLocaleString();
+                      console.log(`[${time}] ${from}:`);
+                      console.log(`  ${msg.content}\n`);
+                    }
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // send command
+            .addCommand(
+              ctx.program
+                .createCommand("send")
+                .description("Send a message to an agent")
+                .argument("<agent_id>", "Target agent ID")
+                .argument("[message...]", "Message content")
+                .action(async (agentId: string, messageParts: string[]) => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered.\n");
+                      return;
+                    }
+
+                    const client = new AgentHubClient(credentials.apiKey);
+
+                    let message: string;
+                    if (messageParts.length > 0) {
+                      message = messageParts.join(" ");
+                    } else {
+                      message = await promptInput("Message: ");
+                    }
+
+                    if (!message) {
+                      console.log("\n⚠️  Message cannot be empty.\n");
+                      return;
+                    }
+
+                    const result = await client.sendMessage(agentId, message);
+
+                    console.log("\n✅ Message sent!");
+                    console.log(`   Target supports chat: ${result.target_supports_chat ? "Yes" : "No"}`);
+                    console.log(`   Delivery hint: ${result.delivery_hint}\n`);
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
+
+            // discover command
+            .addCommand(
+              ctx.program
+                .createCommand("discover")
+                .description("Search and discover agents on AgentHub")
+                .option("--role <role>", "Filter by role: consumer, provider, or both")
+                .option("--tags <tags>", "Filter by tags (comma-separated)")
+                .option("--limit <number>", "Maximum number of results", "20")
+                .action(async (options: { role?: string; tags?: string; limit: string }) => {
+                  try {
+                    const credentials = loadAgentHubCredentials();
+                    if (!credentials) {
+                      console.log("\n⚠️  Not registered.\n");
+                      return;
+                    }
+
+                    const client = new AgentHubClient(credentials.apiKey);
+
+                    const searchOptions: any = {
+                      limit: parseInt(options.limit),
+                    };
+
+                    if (options.role) {
+                      searchOptions.role = options.role;
+                    }
+
+                    if (options.tags) {
+                      searchOptions.tags = options.tags.split(",").map((t) => t.trim());
+                    }
+
+                    const agents = await client.searchAgents(searchOptions);
+
+                    console.log("\n🔍 AgentHub Agents\n");
+
+                    if (agents.length === 0) {
+                      console.log("   No agents found matching your criteria.\n");
+                      return;
+                    }
+
+                    for (let i = 0; i < agents.length; i++) {
+                      const agent = agents[i];
+                      console.log(`   ${i + 1}. ${agent.name} [${agent.agent_id}]`);
+                      console.log(`      Role: ${agent.role}`);
+                      if (agent.description) {
+                        console.log(`      Description: ${agent.description}`);
+                      }
+                      if (agent.tags && agent.tags.length > 0) {
+                        console.log(`      Tags: ${agent.tags.join(", ")}`);
+                      }
+                      console.log(`      Status: ${agent.online ? "🟢 Online" : "⚪ Offline"}`);
+                      console.log();
+                    }
+
+                    console.log(`   Found ${agents.length} agent(s)\n`);
+                  } catch (error) {
+                    console.error(`\n❌ Error: ${error}\n`);
+                    process.exit(1);
+                  }
+                })
+            )
         );
     });
 
