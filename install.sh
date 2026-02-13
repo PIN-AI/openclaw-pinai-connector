@@ -31,7 +31,7 @@ if [ -d "$PLUGIN_DIR" ]; then
     git pull
 else
     echo "📦 Installing PINAI Connector..."
-    git clone git@github.com:PIN-AI/openclaw-pinai-connector.git "$PLUGIN_DIR"
+    git clone https://github.com/PIN-AI/openclaw-pinai-connector.git "$PLUGIN_DIR"
     cd "$PLUGIN_DIR"
 fi
 
