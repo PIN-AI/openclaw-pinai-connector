@@ -38,7 +38,7 @@ export const WORK_CONTEXT_TIMEOUT_MS = 60_000; // 60 seconds
 // =============================================================================
 
 /** Default backend API URL */
-export const DEFAULT_BACKEND_URL = "https://dev-mining.api.pinai.tech";
+export const DEFAULT_BACKEND_URL = "https://mining.api.pinai.tech";
 
 /** Device type identifier for desktop connectors */
 export const DEVICE_TYPE = "desktop" as const;

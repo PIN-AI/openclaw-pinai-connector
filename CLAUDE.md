@@ -158,7 +158,7 @@ Plugin config in `~/.openclaw/openclaw.json`:
   "plugins": {
     "pinai-connector": {
       "enabled": true,
-      "backendUrl": "https://dev-mining.api.pinai.tech",
+      "backendUrl": "https://mining.api.pinai.tech",
       "heartbeatIntervalMs": 30000,
       "qrCodeTimeoutMs": 300000,
       "showQrCode": true,

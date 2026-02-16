@@ -69,7 +69,7 @@ Add to your OpenClaw config (`~/.openclaw/openclaw.json`):
   "plugins": {
     "pinai-connector": {
       "enabled": true,
-      "backendUrl": "https://dev-mining.api.pinai.tech",
+      "backendUrl": "https://mining.api.pinai.tech",
       "heartbeatIntervalMs": 30000,
       "qrCodeTimeoutMs": 300000,
       "showQrCode": true,
@@ -84,7 +84,7 @@ Add to your OpenClaw config (`~/.openclaw/openclaw.json`):
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the connector |
-| `backendUrl` | string | `https://dev-mining.api.pinai.tech` | PINAI backend API URL |
+| `backendUrl` | string | `https://mining.api.pinai.tech` | PINAI backend API URL |
 | `heartbeatIntervalMs` | number | `30000` | Heartbeat interval (ms) |
 | `qrCodeTimeoutMs` | number | `300000` | QR code expiration (ms) |
 | `showQrCode` | boolean | `true` | Display QR in console |

@@ -18,7 +18,7 @@
       },
       "backendUrl": {
         "type": "string",
-        "default": "https://dev-mining.api.pinai.tech",
+        "default": "https://mining.api.pinai.tech",
         "description": "PINAI backend API URL"
       },
       "heartbeatIntervalMs": {
