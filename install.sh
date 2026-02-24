@@ -35,19 +35,21 @@ else
     cd "$PLUGIN_DIR"
 fi
 
-# Install dependencies
+# Install dependencies (package.json has only ws + qrcode-terminal)
 echo ""
 echo "📥 Installing dependencies..."
 npm install
+
+# Register plugin (e.g. into /app/data/extensions when using gateway)
+echo ""
+echo "📌 Registering plugin..."
+openclaw plugins install || echo "⚠️  If plugin does not load, run: openclaw plugins install"
 
 echo ""
 echo "✅ PINAI Connector installed successfully!"
 echo ""
 echo "📱 Next steps:"
-echo "  1. Restart OpenClaw gateway:"
-echo "     openclaw gateway restart"
-echo ""
-echo "  2. Open PINAI App and scan the QR code"
-echo ""
-echo "  3. Start using Desktop Connector!"
+echo "  1. Restart OpenClaw gateway: openclaw gateway restart"
+echo "  2. Start PINAI connector (show QR code): openclaw pinai connect"
+echo "  3. Open PINAI App and scan the QR code."
 echo ""
