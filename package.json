@@ -21,9 +21,6 @@
     "url": "https://github.com/PINAI/openclaw-pinai-connector/issues"
   },
   "homepage": "https://github.com/PINAI/openclaw-pinai-connector#readme",
-  "peerDependencies": {
-    "openclaw": ">=2026.2.0"
-  },
   "dependencies": {
     "ws": "^8.19.0",
     "qrcode-terminal": "^0.12.0"
